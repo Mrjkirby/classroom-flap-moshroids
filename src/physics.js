@@ -1,0 +1,11 @@
+export const TAU = Math.PI * 2;
+export const random = (min, max) => min + Math.random() * (max - min);
+export const wrap = (value, max) => ((value % max) + max) % max;
+export const wrapPosition = (object, width, height) => { object.x = wrap(object.x, width); object.y = wrap(object.y, height); };
+export const distanceSquared = (a, b) => { const dx = a.x - b.x; const dy = a.y - b.y; return dx * dx + dy * dy; };
+export const wrappedDelta = (from, to, width, height) => { let dx = to.x - from.x; let dy = to.y - from.y; if (dx > width / 2) dx -= width; if (dx < -width / 2) dx += width; if (dy > height / 2) dy -= height; if (dy < -height / 2) dy += height; return { x: dx, y: dy }; };
+export const wrappedDistance = (a, b, width, height) => { const delta = wrappedDelta(a, b, width, height); return Math.hypot(delta.x, delta.y); };
+export const wrappedAngleToTarget = (from, target, width, height) => { const delta = wrappedDelta(from, target, width, height); return Math.atan2(delta.y, delta.x); };
+export const angleDifference = (from, to) => Math.atan2(Math.sin(from - to), Math.cos(from - to));
+export const normalizeDelta = (delta) => Math.min(delta, 50) / 1000;
+export const drawWrapped = (ctx, object, width, height, draw) => { const offsets = [[0,0]]; if (object.x < object.radius) offsets.push([width,0]); if (object.x > width-object.radius) offsets.push([-width,0]); if (object.y < object.radius) offsets.push([0,height]); if (object.y > height-object.radius) offsets.push([0,-height]); offsets.forEach(([x,y]) => { ctx.save(); ctx.translate(object.x+x,object.y+y); draw(ctx); ctx.restore(); }); };
