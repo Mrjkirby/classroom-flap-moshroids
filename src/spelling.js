@@ -33,24 +33,135 @@ const TEMPORARY_WORDS = [
   'schedule', 'separate'
 ];
 
-// Replace this adapter with LLPSpellingProvider later. The LLP owns ranking:
-// hardest/lowest mastery first through easiest/highest mastery last. Each current
-// ranking is consumed once, then the next cycle requests a fresh ranking.
-export class LocalSpellingProvider {
-  constructor() { this.cycles = new Map(); }
-  getNextWord({ playerId, studentId = null }) {
-    const index = this.cycles.get(playerId) || 0;
-    this.cycles.set(playerId, (index + 1) % TEMPORARY_WORDS.length);
-    return { wordId: `local-${TEMPORARY_WORDS[index]}`, word: TEMPORARY_WORDS[index], assignmentId: 'local-prototype', rank: index, cycleId: Math.floor(index / TEMPORARY_WORDS.length), studentId };
+// Temporary local provider.
+//
+// Each player receives an independently shuffled copy of the complete word list.
+// Every word is used exactly once before that player's list is reshuffled.
+//
+// Replace this adapter with LLPSpellingProvider later. LLP will own ranking,
+// mastery, assignments and permanent spelling progress.
+
+function shuffleWords(words) {
+  const shuffled = [...words];
+
+  // Fisher-Yates shuffle.
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  submitResult({ studentId = null, wordId, retrievalAttempts, correct, destructionReason }) {
-    const result = { studentId, wordId, retrievalAttempts, correct, destructionReason, recordedAt: Date.now() };
+
+  return shuffled;
+}
+
+export class LocalSpellingProvider {
+  constructor() {
+    this.players = new Map();
+  }
+
+  createCycle(previousLastWord = null) {
+    let words = shuffleWords(TEMPORARY_WORDS);
+
+    // Avoid starting a new cycle with the same word that ended the last one.
+    if (previousLastWord && words.length > 1 && words[0] === previousLastWord) {
+      const swapIndex = 1 + Math.floor(Math.random() * (words.length - 1));
+      [words[0], words[swapIndex]] = [words[swapIndex], words[0]];
+    }
+
+    return words;
+  }
+
+  getPlayerState(playerId) {
+    let state = this.players.get(playerId);
+
+    if (!state) {
+      state = {
+        words: this.createCycle(),
+        index: 0,
+        cycleId: 0,
+        lastWord: null
+      };
+
+      this.players.set(playerId, state);
+    }
+
+    return state;
+  }
+
+  getNextWord({ playerId, studentId = null }) {
+    const state = this.getPlayerState(playerId);
+
+    // Player completed the entire shuffled deck.
+    // Build a fresh randomized cycle.
+    if (state.index >= state.words.length) {
+      state.words = this.createCycle(state.lastWord);
+      state.index = 0;
+      state.cycleId += 1;
+    }
+
+    const rank = state.index;
+    const word = state.words[state.index];
+
+    state.lastWord = word;
+    state.index += 1;
+
+    return {
+      wordId: `local-${word}`,
+      word,
+      assignmentId: 'local-prototype',
+      rank,
+      cycleId: state.cycleId,
+      studentId
+    };
+  }
+
+  submitResult({
+    studentId = null,
+    wordId,
+    retrievalAttempts,
+    correct,
+    destructionReason
+  }) {
+    const result = {
+      studentId,
+      wordId,
+      retrievalAttempts,
+      correct,
+      destructionReason,
+      recordedAt: Date.now()
+    };
+
     console.info('[spelling-result]', result);
     return result;
   }
 }
 
 export const localSpellingProvider = new LocalSpellingProvider();
-export function getNextSpellingWord({ playerId, studentId = null }) { return localSpellingProvider.getNextWord({ playerId, studentId }); }
-export function submitSpellingAttempt({ word, attempt }) { const normalized = attempt.trim().toLowerCase(); return { attempt: normalized, correct: word.toLowerCase() === normalized }; }
-export function completeSpellingChallenge({ studentId, wordId, retrievalAttempts, correct, destructionReason }) { return localSpellingProvider.submitResult({ studentId, wordId, retrievalAttempts, correct, destructionReason }); }
+
+export function getNextSpellingWord({ playerId, studentId = null }) {
+  return localSpellingProvider.getNextWord({ playerId, studentId });
+}
+
+export function submitSpellingAttempt({ word, attempt }) {
+  const normalized = attempt.trim().toLowerCase();
+
+  return {
+    attempt: normalized,
+    correct: word.toLowerCase() === normalized
+  };
+}
+
+export function completeSpellingChallenge({
+  studentId,
+  wordId,
+  retrievalAttempts,
+  correct,
+  destructionReason
+}) {
+  return localSpellingProvider.submitResult({
+    studentId,
+    wordId,
+    retrievalAttempts,
+    correct,
+    destructionReason
+  });
+}
