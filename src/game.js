@@ -36,11 +36,6 @@ let lastTime = performance.now();
 let hasStarted = false;
 
 const camera = new Camera();
-
-/*
- * SafeZones is created after the first resize() because its geometry
- * uses the actual Moshroids world dimensions.
- */
 let safeZones = null;
 
 const world = {
@@ -275,6 +270,10 @@ function releaseMissiles() {
 function update(dt) {
   /*
    * SHIPS
+   *
+   * Ship physics stay exactly as before.
+   * After movement, the safe-zone wall pushes the ship back out
+   * without killing it.
    */
   world.ships.forEach((ship) => {
     const bullet = ship.update(
@@ -283,6 +282,10 @@ function update(dt) {
       worldWidth,
       worldHeight
     );
+
+    if (safeZones && ship.visible) {
+      safeZones.blockShip(ship);
+    }
 
     if (bullet) {
       world.bullets.push(bullet);
@@ -305,6 +308,32 @@ function update(dt) {
   );
 
   /*
+   * BULLET → SAFE-ZONE WALL
+   *
+   * Lasers cannot pass through an L.
+   */
+  if (safeZones) {
+    world.bullets =
+      world.bullets.filter((bullet) => {
+        if (!safeZones.hitsBullet(bullet)) {
+          return true;
+        }
+
+        addExplosion(
+          bullet.x,
+          bullet.y,
+          bullet.owner === 'A'
+            ? '#ff875f'
+            : '#72e6dd',
+          5,
+          2
+        );
+
+        return false;
+      });
+  }
+
+  /*
    * ASTEROIDS
    */
   world.asteroids.forEach((asteroid) =>
@@ -314,6 +343,44 @@ function update(dt) {
       worldHeight
     )
   );
+
+  /*
+   * ASTEROID → SAFE-ZONE WALL
+   *
+   * Large → medium
+   * Medium → small
+   * Small → destroyed
+   *
+   * Children are created by the existing Asteroid.split().
+   */
+  if (safeZones) {
+    const survivingAsteroids = [];
+    const splitAsteroids = [];
+
+    world.asteroids.forEach((asteroid) => {
+      if (!safeZones.hitsAsteroid(asteroid)) {
+        survivingAsteroids.push(asteroid);
+        return;
+      }
+
+      addExplosion(
+        asteroid.x,
+        asteroid.y,
+        '#f1f0ea',
+        asteroid.size === 'small' ? 10 : 16,
+        4
+      );
+
+      splitAsteroids.push(
+        ...asteroid.split()
+      );
+    });
+
+    world.asteroids = [
+      ...survivingAsteroids,
+      ...splitAsteroids
+    ];
+  }
 
   /*
    * MR. K ROCK
@@ -353,6 +420,30 @@ function update(dt) {
       return missile.life > 0;
     }
   );
+
+  /*
+   * MISSILE → SAFE-ZONE WALL
+   *
+   * MR.K missiles cannot enter the protected pocket.
+   */
+  if (safeZones) {
+    world.missiles =
+      world.missiles.filter((missile) => {
+        if (!safeZones.hitsMissile(missile)) {
+          return true;
+        }
+
+        addExplosion(
+          missile.x,
+          missile.y,
+          '#ffdb69',
+          7,
+          3
+        );
+
+        return false;
+      });
+  }
 
   /*
    * PARTICLES
@@ -796,10 +887,10 @@ function drawWorld() {
   drawGrid();
 
   /*
-   * FOUR CORNER SAFE-ZONE L BARRIERS
+   * FOUR FUNCTIONAL CORNER SAFE-ZONE L BARRIERS
    *
    * Each arm is exactly seven ship lengths.
-   * This is visual only in this pass.
+   * Drawing and collision use the same geometry.
    */
   if (safeZones) {
     safeZones.draw(ctx);
