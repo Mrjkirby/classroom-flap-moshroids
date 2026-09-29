@@ -1,15 +1,22 @@
 import { Asteroid } from './asteroid.js';
+import { Bullet } from './bullet.js';
 import { Camera } from './camera.js';
 import { HomingMissile } from './homingMissile.js';
 import { MrKRock } from './mrKRock.js';
 import { SafeZones } from './safeZone.js';
 import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
+import { weaponSystem } from './weaponSystem.js';
 import { drawWrapped, normalizeDelta, random, wrappedDistance } from './physics.js';
 import {
   bindPilotLogin,
+  claimGunDrop,
+  getGunDrops,
+  getLocalIdentity,
   getRemotePlayers,
+  publishGunDrops,
   publishLocalState,
+  removeExpiredGunDrop,
   updateRemotePlayers
 } from './multiplayer.js';
 
@@ -32,6 +39,7 @@ let worldHeight = 0;
 let lastTime = performance.now();
 let hasStarted = false;
 let multiplayerJoined = false;
+let pickupInProgress = false;
 
 const camera = new Camera();
 let safeZones = null;
@@ -44,7 +52,7 @@ const world = {
   particles: [],
   mrK: null,
   mrKRespawnTimer: 0,
-  scores: { A: 0, B: 0 }
+  scores: { A: 0 }
 };
 
 const controls = {
@@ -119,16 +127,6 @@ function addRockExplosion(x, y) {
   }
 }
 
-function findClosestShip(missile) {
-  return world.ships
-    .filter((ship) => ship.visible)
-    .sort(
-      (a, b) =>
-        wrappedDistance(missile, a, worldWidth, worldHeight) -
-        wrappedDistance(missile, b, worldWidth, worldHeight)
-    )[0] || null;
-}
-
 function reset() {
   world.ships = [
     new Ship('A', worldWidth * 0.5, worldHeight * 0.5, controls.A)
@@ -139,6 +137,8 @@ function reset() {
   world.particles = [];
   world.mrKRespawnTimer = 0;
   world.scores = { A: 0 };
+
+  weaponSystem.reset();
 
   spawnAsteroids();
   spawnMrK();
@@ -158,25 +158,162 @@ function suspendPlayerControls(playerId) {
   Object.values(controls[playerId]).forEach((control) => keys.delete(control));
 }
 
-function playerDestroyed(playerId, reason) {
+/* =========================================================
+   GUN DROPS
+   ========================================================= */
+
+async function dropLocalGuns(ship) {
+  const identity = getLocalIdentity();
+  if (!identity) return;
+
+  const gunCount = weaponSystem.getGunCount();
+
   /*
-   * Only this browser owns the local A ship.
-   * Remote deaths will eventually be synchronized as multiplayer events.
-   * Do not open this browser's spelling screen for somebody else's ship.
+   * Every gun owned by the destroyed player becomes its own pickup.
+   * createDrops() also creates them locally immediately so the death
+   * feels responsive instead of waiting for Firebase round-trip.
    */
+  const drops = weaponSystem.createDrops(
+    ship.x,
+    ship.y,
+    identity.uid,
+    gunCount
+  );
+
+  /*
+   * The dead ship loses its entire accumulated arsenal.
+   * Respawn returns with the normal single starting gun.
+   */
+  weaponSystem.setGunCount(1);
+
+  if (drops.length) {
+    await publishGunDrops(drops);
+  }
+}
+
+function syncGunDrops() {
+  if (!multiplayerJoined) return;
+
+  const sharedDrops = getGunDrops();
+  const sharedIds = new Set(sharedDrops.keys());
+
+  /*
+   * Add/update every Firebase drop in the local renderer.
+   */
+  sharedDrops.forEach((drop, id) => {
+    const existing = weaponSystem.drops.get(id);
+
+    if (existing) {
+      existing.x = drop.x;
+      existing.y = drop.y;
+      existing.radius = drop.radius;
+      existing.createdAt = drop.createdAt;
+      existing.expiresAt = drop.expiresAt;
+      return;
+    }
+
+    weaponSystem.addDrop(drop);
+  });
+
+  /*
+   * Once Firebase removes a drop because somebody collected it,
+   * remove it from this browser too.
+   */
+  for (const id of [...weaponSystem.drops.keys()]) {
+    if (!sharedIds.has(id)) {
+      weaponSystem.removeDrop(id);
+    }
+  }
+}
+
+async function checkGunPickup() {
+  if (!multiplayerJoined || pickupInProgress) return;
+
+  const ship = world.ships.find((candidate) => candidate.owner === 'A');
+
+  if (!ship || !ship.visible || ship.state !== 'ACTIVE') return;
+  if (weaponSystem.getGunCount() >= 40) return;
+
+  const drop = weaponSystem.findPickup(ship);
+  if (!drop) return;
+
+  pickupInProgress = true;
+
+  try {
+    /*
+     * Firebase decides who wins the race for this individual gun.
+     * Only the browser that successfully claims it receives the gun.
+     */
+    const claimed = await claimGunDrop(drop.id);
+
+    if (!claimed) return;
+
+    const pickup = weaponSystem.confirmPickup(drop.id);
+
+    if (pickup) {
+      addExplosion(drop.x, drop.y, '#ff3b30', 9, 2);
+
+      /*
+       * Push the new gun count promptly rather than waiting for the
+       * normal 12 Hz movement update.
+       */
+      publishPlayerState(true);
+    }
+  } catch (error) {
+    console.error('Gun pickup failed:', error);
+  } finally {
+    pickupInProgress = false;
+  }
+}
+
+function updateGunDrops() {
+  if (!multiplayerJoined) return;
+
+  syncGunDrops();
+
+  const now = Date.now();
+
+  /*
+   * Expiration is shared through Firebase. Any browser may request
+   * cleanup; removing an already-removed node is harmless.
+   */
+  getGunDrops().forEach((drop, id) => {
+    if (now >= drop.expiresAt) {
+      removeExpiredGunDrop(id);
+    }
+  });
+
+  checkGunPickup();
+}
+
+/* =========================================================
+   PLAYER DEATH / RESPAWN
+   ========================================================= */
+
+function playerDestroyed(playerId, reason) {
   if (playerId !== 'A') return false;
 
   const ship = world.ships.find((candidate) => candidate.owner === playerId);
   if (!ship || !ship.destroy()) return false;
 
+  /*
+   * Drop the player's complete gun inventory before spelling begins.
+   */
+  dropLocalGuns(ship);
+
   suspendPlayerControls(playerId);
   spelling.begin({ playerId, reason });
+
   return true;
 }
 
 function respawnPlayer(playerId) {
   const ship = world.ships.find((candidate) => candidate.owner === playerId);
-  if (ship) ship.respawn();
+
+  if (ship) {
+    weaponSystem.setGunCount(1);
+    ship.respawn();
+  }
 }
 
 function releaseMissiles() {
@@ -194,17 +331,15 @@ function releaseMissiles() {
   }
 }
 
-/*
- * REMOTE SHIPS
- *
- * Firebase contains compact target positions. multiplayer.js interpolates
- * them smoothly. These Ship instances are render/collision representations
- * only; they never process this browser's keyboard.
- */
+/* =========================================================
+   MULTIPLAYER SHIPS
+   ========================================================= */
+
 function syncRemoteShips(dt) {
   if (!multiplayerJoined) return;
 
   updateRemotePlayers(dt, worldWidth, worldHeight);
+
   const remotePlayers = getRemotePlayers();
   const remoteIds = new Set(remotePlayers.keys());
 
@@ -230,39 +365,77 @@ function syncRemoteShips(dt) {
     ship.velocityY = remote.velocityY;
     ship.visible = remote.visible;
     ship.state = remote.visible ? 'ACTIVE' : 'SPELLING';
+    ship.guns = remote.guns;
   });
 }
 
-function publishPlayerState() {
+function publishPlayerState(force = false) {
   if (!multiplayerJoined) return;
 
   const ship = world.ships.find((candidate) => candidate.owner === 'A');
   if (!ship) return;
 
-  publishLocalState({
-    x: ship.x,
-    y: ship.y,
-    angle: ship.angle,
-    velocityX: ship.velocityX,
-    velocityY: ship.velocityY,
-    visible: ship.visible,
-    score: world.scores.A
+  publishLocalState(
+    {
+      x: ship.x,
+      y: ship.y,
+      angle: ship.angle,
+      velocityX: ship.velocityX,
+      velocityY: ship.velocityY,
+      visible: ship.visible,
+      score: world.scores.A,
+      guns: weaponSystem.getGunCount()
+    },
+    force
+  );
+}
+
+/* =========================================================
+   WEAPON FIRING
+   ========================================================= */
+
+function fireWeapons(ship) {
+  const emitters = weaponSystem.getEmitters(ship);
+
+  emitters.forEach((emitter) => {
+    world.bullets.push(
+      new Bullet(
+        emitter.x,
+        emitter.y,
+        emitter.angle,
+        emitter.velocityX,
+        emitter.velocityY,
+        ship.owner
+      )
+    );
   });
 }
 
+/* =========================================================
+   UPDATE
+   ========================================================= */
+
 function update(dt) {
   syncRemoteShips(dt);
+  updateGunDrops();
 
   /*
    * SHIPS
-   * Local physics remain exactly in Ship.update().
-   * Remote ships are display-only and Ship.update() ignores them.
+   *
+   * Ship.update() still owns movement and firing cooldown.
+   * Its returned single bullet is used only as the FIRE TRIGGER.
+   * weaponSystem then creates the correct number/direction of lasers.
    */
   world.ships.forEach((ship) => {
-    const bullet = ship.update(dt, keys, worldWidth, worldHeight);
+    const fireTrigger = ship.update(dt, keys, worldWidth, worldHeight);
 
-    if (safeZones && ship.visible && !ship.remote) safeZones.blockShip(ship);
-    if (bullet) world.bullets.push(bullet);
+    if (safeZones && ship.visible && !ship.remote) {
+      safeZones.blockShip(ship);
+    }
+
+    if (fireTrigger && !ship.remote) {
+      fireWeapons(ship);
+    }
   });
 
   publishPlayerState();
@@ -270,10 +443,12 @@ function update(dt) {
   /*
    * BULLETS
    */
-  world.bullets.forEach((bullet) => bullet.update(dt, worldWidth, worldHeight));
+  world.bullets.forEach((bullet) =>
+    bullet.update(dt, worldWidth, worldHeight)
+  );
+
   world.bullets = world.bullets.filter((bullet) => bullet.life > 0);
 
-  /* BULLET → SAFE-ZONE WALL */
   if (safeZones) {
     world.bullets = world.bullets.filter((bullet) => {
       if (!safeZones.hitsBullet(bullet)) return true;
@@ -297,7 +472,6 @@ function update(dt) {
     asteroid.update(dt, worldWidth, worldHeight)
   );
 
-  /* ASTEROID → SAFE-ZONE WALL */
   if (safeZones) {
     const survivingAsteroids = [];
     const splitAsteroids = [];
@@ -325,7 +499,9 @@ function update(dt) {
   /*
    * MR. K ROCK
    */
-  if (world.mrK) world.mrK.update(dt, worldWidth, worldHeight);
+  if (world.mrK) {
+    world.mrK.update(dt, worldWidth, worldHeight);
+  }
 
   /*
    * MISSILES
@@ -342,7 +518,6 @@ function update(dt) {
     return missile.life > 0;
   });
 
-  /* MISSILE → SAFE-ZONE WALL */
   if (safeZones) {
     world.missiles = world.missiles.filter((missile) => {
       if (!safeZones.hitsMissile(missile)) return true;
@@ -366,10 +541,13 @@ function update(dt) {
   world.particles = world.particles.filter((particle) => particle.life > 0);
 
   /*
-   * BULLET → MISSILE
-   * BULLET → ASTEROID
+   * BULLET → MISSILE / ASTEROID
    */
-  for (let bulletIndex = world.bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) {
+  for (
+    let bulletIndex = world.bullets.length - 1;
+    bulletIndex >= 0;
+    bulletIndex -= 1
+  ) {
     const bullet = world.bullets[bulletIndex];
 
     const missileIndex = world.missiles.findIndex(
@@ -380,7 +558,9 @@ function update(dt) {
 
     if (missileIndex >= 0) {
       world.bullets.splice(bulletIndex, 1);
+
       const missile = world.missiles.splice(missileIndex, 1)[0];
+
       addExplosion(missile.x, missile.y, '#ffdb69', 7, 3);
       continue;
     }
@@ -398,9 +578,6 @@ function update(dt) {
     world.bullets.splice(bulletIndex, 1);
     world.asteroids.splice(asteroidIndex, 1);
 
-    /*
-     * Only locally-created bullets have a local score bucket right now.
-     */
     if (world.scores[bullet.owner] !== undefined) {
       world.scores[bullet.owner] += asteroid.points;
       updateScores();
@@ -417,10 +594,14 @@ function update(dt) {
   }
 
   /*
-   * BULLET → MR. K ROCK
+   * BULLET → MR. K
    */
   if (world.mrK) {
-    for (let bulletIndex = world.bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) {
+    for (
+      let bulletIndex = world.bullets.length - 1;
+      bulletIndex >= 0;
+      bulletIndex -= 1
+    ) {
       const bullet = world.bullets[bulletIndex];
 
       if (
@@ -458,11 +639,14 @@ function update(dt) {
   /*
    * BULLET → OTHER PLAYER
    *
-   * At this stage local bullets can visually collide with remote ships,
-   * but a remote player's death must be handled by that player's browser.
-   * We do not trigger our own spelling screen for a remote ship.
+   * Remote death synchronization is still the next multiplayer combat layer.
+   * This browser only opens spelling for its own local ship.
    */
-  for (let bulletIndex = world.bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) {
+  for (
+    let bulletIndex = world.bullets.length - 1;
+    bulletIndex >= 0;
+    bulletIndex -= 1
+  ) {
     const bullet = world.bullets[bulletIndex];
 
     const target = world.ships.find(
@@ -485,7 +669,11 @@ function update(dt) {
   /*
    * MISSILE COLLISIONS
    */
-  for (let missileIndex = world.missiles.length - 1; missileIndex >= 0; missileIndex -= 1) {
+  for (
+    let missileIndex = world.missiles.length - 1;
+    missileIndex >= 0;
+    missileIndex -= 1
+  ) {
     const missile = world.missiles[missileIndex];
 
     const rockHit =
@@ -509,10 +697,6 @@ function update(dt) {
       continue;
     }
 
-    /*
-     * Environmental missile death is local-authoritative for now.
-     * Only kill A in this browser.
-     */
     const target = world.ships.find(
       (ship) =>
         ship.owner === 'A' &&
@@ -553,15 +737,24 @@ function update(dt) {
   /*
    * RESPAWNS
    */
-  if (!world.asteroids.length) spawnAsteroids();
+  if (!world.asteroids.length) {
+    spawnAsteroids();
+  }
 
   if (!world.mrK) {
     world.mrKRespawnTimer -= dt;
-    if (world.mrKRespawnTimer <= 0) spawnMrK();
+
+    if (world.mrKRespawnTimer <= 0) {
+      spawnMrK();
+    }
   }
 
   camera.update(world.ships, width, height, worldWidth, worldHeight);
 }
+
+/* =========================================================
+   DRAW
+   ========================================================= */
 
 function drawGrid() {
   ctx.save();
@@ -589,14 +782,15 @@ function drawGrid() {
 function drawWorld() {
   drawGrid();
 
-  /* Four functional corner safe-zone L barriers. */
   if (safeZones) safeZones.draw(ctx);
 
   world.asteroids.forEach((asteroid) =>
     asteroid.draw(ctx, worldWidth, worldHeight)
   );
 
-  if (world.mrK) world.mrK.draw(ctx, worldWidth, worldHeight);
+  if (world.mrK) {
+    world.mrK.draw(ctx, worldWidth, worldHeight);
+  }
 
   world.bullets.forEach((bullet) =>
     drawWrapped(
@@ -615,6 +809,11 @@ function drawWorld() {
   world.ships.forEach((ship) =>
     ship.draw(ctx, worldWidth, worldHeight)
   );
+
+  /*
+   * Flashing red gun pickups and their 10-second countdowns.
+   */
+  weaponSystem.draw(ctx);
 
   world.particles.forEach((particle) => {
     ctx.save();
@@ -655,8 +854,13 @@ function frame(now) {
 
   spelling.update(now);
   draw();
+
   requestAnimationFrame(frame);
 }
+
+/* =========================================================
+   INPUT
+   ========================================================= */
 
 function keyName(event) {
   if (
@@ -672,12 +876,6 @@ function keyName(event) {
   return event.key.toLowerCase();
 }
 
-/*
- * PILOT LOGIN
- *
- * The ship already exists locally before login. We simply give Firebase
- * its current state when the student presses ENTER MOSH.
- */
 bindPilotLogin(
   () => {
     const ship = world.ships.find((candidate) => candidate.owner === 'A');
@@ -689,7 +887,8 @@ bindPilotLogin(
       velocityX: ship?.velocityX ?? 0,
       velocityY: ship?.velocityY ?? 0,
       visible: ship?.visible !== false,
-      score: world.scores.A
+      score: world.scores.A,
+      guns: weaponSystem.getGunCount()
     };
   },
   (identity) => {
@@ -720,10 +919,6 @@ gameShell.addEventListener('input', (event) => {
 document.addEventListener(
   'keydown',
   (event) => {
-    /*
-     * Do not let gameplay controls fire while typing a pilot name
-     * or completing the spelling challenge.
-     */
     if (
       event.target.closest('.wormhole-overlay') ||
       event.target.closest('.pilot-login-overlay')
@@ -768,11 +963,6 @@ window.addEventListener('blur', () => keys.clear());
 
 window.addEventListener('resize', () => {
   resize();
-
-  /*
-   * Preserve the original resize/reset behaviour for now.
-   * Multiplayer state will republish the new local spawn afterward.
-   */
   reset();
 });
 
