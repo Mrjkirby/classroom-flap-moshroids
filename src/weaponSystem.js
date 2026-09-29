@@ -4,9 +4,19 @@ const DROP_LIFETIME = 10;
 const PICKUP_RADIUS = 25;
 const DROP_RADIUS = 8;
 
-const FORWARD_END = 10;
-const BACK_END = 20;
-const RIGHT_END = 30;
+/*
+ * Ship is approximately 34 px long/wide in the current game.
+ *
+ * For two guns:
+ *   <---- 17 px ---->
+ *      |         |
+ *         SHIP
+ *
+ * As guns are added, the bank grows outward while remaining centred.
+ */
+const SHIP_WIDTH = 34;
+const TWIN_GUN_SPACING = SHIP_WIDTH / 2; // 17 px
+const GUN_SPACING = TWIN_GUN_SPACING;
 
 export class WeaponSystem {
   constructor() {
@@ -24,13 +34,21 @@ export class WeaponSystem {
   }
 
   setGunCount(count) {
-    this.gunCount = Math.max(STARTING_GUNS, Math.min(MAX_GUNS, Math.floor(count)));
+    this.gunCount = Math.max(
+      STARTING_GUNS,
+      Math.min(MAX_GUNS, Math.floor(Number(count) || STARTING_GUNS))
+    );
+
     return this.gunCount;
   }
 
   addGun(count = 1) {
     const before = this.gunCount;
-    this.gunCount = Math.min(MAX_GUNS, this.gunCount + Math.max(0, Math.floor(count)));
+
+    this.gunCount = Math.min(
+      MAX_GUNS,
+      this.gunCount + Math.max(0, Math.floor(Number(count) || 0))
+    );
 
     return {
       before,
@@ -41,17 +59,17 @@ export class WeaponSystem {
   }
 
   /*
-   * Every owned gun drops individually.
-   * The destroyed player returns to one starting gun after respawn.
+   * Every gun owned by the destroyed player drops separately.
    */
   createDrops(x, y, ownerUid, gunCount = this.gunCount, now = performance.now()) {
-    const count = Math.max(0, Math.floor(gunCount));
+    const count = Math.max(0, Math.floor(Number(gunCount) || 0));
     const drops = [];
 
     for (let index = 0; index < count; index += 1) {
       const angle = (index / Math.max(1, count)) * Math.PI * 2;
       const ring = 22 + (index % 4) * 8;
-      const id = `${ownerUid}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`;
+      const id =
+        `${ownerUid}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`;
 
       const drop = {
         id,
@@ -100,10 +118,8 @@ export class WeaponSystem {
   }
 
   /*
-   * Returns a touched drop but DOES NOT award it.
-   *
-   * Multiplayer must claim the drop through Firebase first.
-   * This prevents two browsers from both receiving the same gun.
+   * Find a gun touched by the local ship.
+   * Firebase still decides which player actually wins the pickup.
    */
   findPickup(ship) {
     if (!ship?.visible) return null;
@@ -111,9 +127,10 @@ export class WeaponSystem {
     for (const drop of this.drops.values()) {
       if (drop.collected) continue;
 
-      const dx = ship.x - drop.x;
-      const dy = ship.y - drop.y;
-      const distance = Math.hypot(dx, dy);
+      const distance = Math.hypot(
+        ship.x - drop.x,
+        ship.y - drop.y
+      );
 
       if (distance <= (ship.radius ?? 15) + PICKUP_RADIUS) {
         return drop;
@@ -125,6 +142,7 @@ export class WeaponSystem {
 
   confirmPickup(dropId) {
     const drop = this.drops.get(dropId);
+
     if (!drop || drop.collected) return null;
 
     drop.collected = true;
@@ -140,43 +158,94 @@ export class WeaponSystem {
   }
 
   /*
-   * Gun direction progression:
+   * Creates one centred parallel firing bank.
+   *
+   * Examples:
+   *
+   * 1 gun:
+   *             |
+   *
+   * 2 guns:
+   *         |       |
+   *
+   * 3 guns:
+   *     |       |       |
+   *
+   * 4 guns:
+   * |       |       |       |
+   *
+   * Even-numbered banks straddle the ship centreline.
+   * Odd-numbered banks include one centre gun.
+   */
+  getBankOffsets(count) {
+    if (count <= 1) return [0];
+
+    const centre = (count - 1) / 2;
+    const offsets = [];
+
+    for (let index = 0; index < count; index += 1) {
+      offsets.push((index - centre) * GUN_SPACING);
+    }
+
+    return offsets;
+  }
+
+  /*
+   * Gun progression:
    *
    *  1–10  FRONT
    * 11–20  BACK
    * 21–30  RIGHT
    * 31–40  LEFT
    *
-   * Each gun produces its OWN emitter.
+   * Every gun is a real emitter.
+   *
+   * Therefore:
+   *
+   *  2 guns = 2 simultaneous forward bullets
+   *  5 guns = 5 simultaneous forward bullets
+   * 10 guns = 10 simultaneous forward bullets
+   *
+   * At 11 guns:
+   * 10 fire forward + 1 backward.
+   *
+   * At 40 guns:
+   * 10 forward + 10 backward + 10 right + 10 left.
    */
   getEmitters(ship) {
     const emitters = [];
 
-    for (let gunNumber = 1; gunNumber <= this.gunCount; gunNumber += 1) {
-      let directionOffset = 0;
-      let sideOffset = 0;
-      let forwardOffset = 16;
+    const frontCount = Math.min(this.gunCount, 10);
+    const backCount = Math.min(Math.max(this.gunCount - 10, 0), 10);
+    const rightCount = Math.min(Math.max(this.gunCount - 20, 0), 10);
+    const leftCount = Math.min(Math.max(this.gunCount - 30, 0), 10);
 
-      if (gunNumber <= FORWARD_END) {
-        directionOffset = 0;
-        sideOffset = this.spreadOffset(gunNumber, 1);
-      } else if (gunNumber <= BACK_END) {
-        directionOffset = Math.PI;
-        sideOffset = this.spreadOffset(gunNumber, 11);
-      } else if (gunNumber <= RIGHT_END) {
-        directionOffset = Math.PI / 2;
-        sideOffset = this.spreadOffset(gunNumber, 21);
-      } else {
-        directionOffset = -Math.PI / 2;
-        sideOffset = this.spreadOffset(gunNumber, 31);
-      }
+    this.addBank(emitters, ship, frontCount, 0, 1);
+    this.addBank(emitters, ship, backCount, Math.PI, 11);
+    this.addBank(emitters, ship, rightCount, Math.PI / 2, 21);
+    this.addBank(emitters, ship, leftCount, -Math.PI / 2, 31);
 
-      const angle = ship.angle + directionOffset;
+    return emitters;
+  }
 
-      /*
-       * sideOffset is perpendicular to the firing direction so
-       * multiple guns form distinct parallel laser streams.
-       */
+  /*
+   * All emitters in a bank fire at EXACTLY the same angle.
+   * Only their sideways starting positions differ.
+   *
+   * This produces parallel laser streams instead of a fan.
+   */
+  addBank(emitters, ship, count, directionOffset, firstGunNumber) {
+    if (count <= 0) return;
+
+    const angle = ship.angle + directionOffset;
+    const offsets = this.getBankOffsets(count);
+
+    /*
+     * Spawn just beyond the ship body.
+     */
+    const forwardOffset = 18;
+
+    offsets.forEach((sideOffset, index) => {
       const x =
         ship.x +
         Math.cos(angle) * forwardOffset +
@@ -188,30 +257,21 @@ export class WeaponSystem {
         Math.sin(angle + Math.PI / 2) * sideOffset;
 
       emitters.push({
-        gunNumber,
+        gunNumber: firstGunNumber + index,
         x,
         y,
         angle,
         velocityX: ship.velocityX,
         velocityY: ship.velocityY
       });
-    }
-
-    return emitters;
-  }
-
-  spreadOffset(gunNumber, groupStart) {
-    const index = gunNumber - groupStart;
-
-    /*
-     * Ten parallel streams centred around the ship:
-     * -22.5, -17.5 ... +22.5
-     */
-    return (index - 4.5) * 5;
+    });
   }
 
   getRemainingSeconds(drop, now = performance.now()) {
-    return Math.max(0, Math.ceil((drop.expiresAt - now) / 1000));
+    return Math.max(
+      0,
+      Math.ceil((drop.expiresAt - now) / 1000)
+    );
   }
 
   draw(ctx, now = performance.now()) {
@@ -219,11 +279,9 @@ export class WeaponSystem {
 
     for (const drop of this.drops.values()) {
       const remaining = this.getRemainingSeconds(drop, now);
+
       if (remaining <= 0) continue;
 
-      /*
-       * Flash faster during the final three seconds.
-       */
       const flashRate = remaining <= 3 ? 120 : 250;
       const visible = Math.floor(now / flashRate) % 2 === 0;
 
@@ -233,28 +291,40 @@ export class WeaponSystem {
         ctx.lineWidth = 2;
 
         ctx.beginPath();
-        ctx.arc(drop.x, drop.y, DROP_RADIUS, 0, Math.PI * 2);
+        ctx.arc(
+          drop.x,
+          drop.y,
+          DROP_RADIUS,
+          0,
+          Math.PI * 2
+        );
         ctx.stroke();
 
         /*
-         * Small laser-gun shape inside the pickup circle.
+         * Small laser-gun symbol.
          */
         ctx.beginPath();
         ctx.moveTo(drop.x - 5, drop.y);
         ctx.lineTo(drop.x + 5, drop.y);
+
         ctx.moveTo(drop.x + 1, drop.y);
         ctx.lineTo(drop.x + 5, drop.y + 5);
         ctx.stroke();
       }
 
       /*
-       * Countdown remains visible even while the gun itself flashes.
+       * Countdown stays visible while the pickup flashes.
        */
       ctx.fillStyle = '#ff3b30';
       ctx.font = '700 13px Barlow Condensed,sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(String(remaining), drop.x, drop.y - 17);
+
+      ctx.fillText(
+        String(remaining),
+        drop.x,
+        drop.y - 17
+      );
     }
 
     ctx.restore();
