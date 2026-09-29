@@ -123,7 +123,7 @@ function setNetworkStatus(isConnected) {
 
 
 /* =========================================================
-   NAME
+   HELPERS
    ========================================================= */
 
 function cleanPilotName(value) {
@@ -134,11 +134,24 @@ function cleanPilotName(value) {
 }
 
 
+function clampGunCount(value) {
+  return Math.max(
+    1,
+    Math.min(40, Math.floor(Number(value) || 1))
+  );
+}
+
+
 function applyPilotName(name) {
   pilotName = name;
 
-  if (pilotDisplayName) pilotDisplayName.textContent = name.toUpperCase();
-  if (controlsPilotName) controlsPilotName.textContent = name.toUpperCase();
+  if (pilotDisplayName) {
+    pilotDisplayName.textContent = name.toUpperCase();
+  }
+
+  if (controlsPilotName) {
+    controlsPilotName.textContent = name.toUpperCase();
+  }
 }
 
 
@@ -148,24 +161,43 @@ function applyPilotName(name) {
 
 function waitForAuth() {
   return new Promise((resolve, reject) => {
+    const existingUser = auth.currentUser;
+
+    if (existingUser) {
+      currentUser = existingUser;
+      resolve(existingUser);
+      return;
+    }
+
+    let settled = false;
+
     const unsubscribe = onAuthStateChanged(
       auth,
       (user) => {
-        if (!user) return;
+        if (!user || settled) return;
 
+        settled = true;
         unsubscribe();
+
         currentUser = user;
         resolve(user);
       },
       (error) => {
+        if (settled) return;
+
+        settled = true;
         unsubscribe();
         reject(error);
       }
     );
 
-    if (!auth.currentUser) {
-      signInAnonymously(auth).catch(reject);
-    }
+    signInAnonymously(auth).catch((error) => {
+      if (settled) return;
+
+      settled = true;
+      unsubscribe();
+      reject(error);
+    });
   });
 }
 
@@ -179,20 +211,33 @@ async function createPlayerRecord(initialState) {
     throw new Error('Firebase user is not authenticated.');
   }
 
-  playerRef = ref(database, `${playersPath}/${currentUser.uid}`);
+  playerRef = ref(
+    database,
+    `${playersPath}/${currentUser.uid}`
+  );
 
+  /*
+   * If the browser disappears unexpectedly,
+   * remove this player's live ship.
+   */
   await onDisconnect(playerRef).remove();
 
   await set(playerRef, {
     name: pilotName,
+
     x: Number(initialState.x) || 0,
     y: Number(initialState.y) || 0,
+
     angle: Number(initialState.angle) || 0,
+
     velocityX: Number(initialState.velocityX) || 0,
     velocityY: Number(initialState.velocityY) || 0,
+
     visible: initialState.visible !== false,
+
     score: Number(initialState.score) || 0,
-    guns: Math.max(1, Math.min(40, Number(initialState.guns) || 1)),
+    guns: clampGunCount(initialState.guns),
+
     updatedAt: serverTimestamp()
   });
 }
@@ -203,7 +248,9 @@ async function createPlayerRecord(initialState) {
    ========================================================= */
 
 function startPlayerListener() {
-  if (unsubscribePlayers) unsubscribePlayers();
+  if (unsubscribePlayers) {
+    unsubscribePlayers();
+  }
 
   const playersRef = ref(database, playersPath);
 
@@ -220,12 +267,15 @@ function startPlayerListener() {
           !player ||
           typeof player.x !== 'number' ||
           typeof player.y !== 'number'
-        ) return;
+        ) {
+          return;
+        }
 
         const previous = remotePlayers.get(uid);
 
         nextPlayers.set(uid, {
           uid,
+
           name: cleanPilotName(player.name) || 'PILOT',
 
           targetX: player.x,
@@ -236,11 +286,18 @@ function startPlayerListener() {
           velocityY: Number(player.velocityY) || 0,
 
           visible: player.visible !== false,
-          score: Number(player.score) || 0,
-          guns: Math.max(1, Math.min(40, Number(player.guns) || 1)),
 
-          renderX: previous ? previous.renderX : player.x,
-          renderY: previous ? previous.renderY : player.y,
+          score: Number(player.score) || 0,
+          guns: clampGunCount(player.guns),
+
+          renderX: previous
+            ? previous.renderX
+            : player.x,
+
+          renderY: previous
+            ? previous.renderY
+            : player.y,
+
           renderAngle: previous
             ? previous.renderAngle
             : Number(player.angle) || 0
@@ -251,7 +308,11 @@ function startPlayerListener() {
       setNetworkStatus(true);
     },
     (error) => {
-      console.error('Moshroids player listener failed:', error);
+      console.error(
+        'Moshroids player listener failed:',
+        error
+      );
+
       setNetworkStatus(false);
     }
   );
@@ -263,7 +324,9 @@ function startPlayerListener() {
    ========================================================= */
 
 function startGunDropListener() {
-  if (unsubscribeGunDrops) unsubscribeGunDrops();
+  if (unsubscribeGunDrops) {
+    unsubscribeGunDrops();
+  }
 
   const dropsRef = ref(database, gunDropsPath);
 
@@ -278,125 +341,275 @@ function startGunDropListener() {
           !drop ||
           typeof drop.x !== 'number' ||
           typeof drop.y !== 'number'
-        ) return;
+        ) {
+          return;
+        }
+
+        /*
+         * Claimed drops should disappear immediately from gameplay,
+         * even during the tiny interval before the winner removes
+         * the Firebase node.
+         */
+        if (drop.claimedBy) return;
+
+        const createdAt =
+          Number(drop.createdAt) || Date.now();
+
+        const expiresAt =
+          Number(drop.expiresAt) ||
+          createdAt + GUN_DROP_LIFETIME;
 
         nextDrops.set(id, {
           id,
-          ownerUid: String(drop.ownerUid || ''),
+
+          ownerUid:
+            String(drop.ownerUid || ''),
+
           x: drop.x,
           y: drop.y,
-          radius: Number(drop.radius) || 8,
-          createdAt: Number(drop.createdAt) || Date.now(),
-          expiresAt: Number(drop.expiresAt) || Date.now() + GUN_DROP_LIFETIME
+
+          radius:
+            Number(drop.radius) || 8,
+
+          createdAt,
+          expiresAt
         });
       });
 
       remoteGunDrops = nextDrops;
     },
     (error) => {
-      console.error('Moshroids gun-drop listener failed:', error);
+      console.error(
+        'Moshroids gun-drop listener failed:',
+        error
+      );
     }
   );
 }
 
 
 /*
- * Publish every gun as its own Firebase object.
+ * Every gun is stored as its own Firebase node.
  *
- * weaponSystem.js creates the local drop positions.
- * This function makes those exact drops visible to every player.
+ * If a player with 17 guns dies, this writes 17 independent
+ * pickups. Each can then be claimed independently.
  */
 async function publishGunDrops(drops) {
-  if (!currentUser || !Array.isArray(drops) || !drops.length) return false;
+  if (
+    !currentUser ||
+    !Array.isArray(drops) ||
+    !drops.length
+  ) {
+    return false;
+  }
 
   const writes = {};
+  const now = Date.now();
 
   drops.forEach((drop) => {
     if (!drop?.id) return;
 
     writes[`${gunDropsPath}/${drop.id}`] = {
       ownerUid: currentUser.uid,
+
       x: Number(drop.x) || 0,
       y: Number(drop.y) || 0,
-      radius: Number(drop.radius) || 8,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + GUN_DROP_LIFETIME
+
+      radius:
+        Number(drop.radius) || 8,
+
+      createdAt: now,
+      expiresAt:
+        now + GUN_DROP_LIFETIME,
+
+      claimedBy: null
     };
   });
 
-  if (!Object.keys(writes).length) return false;
+  if (!Object.keys(writes).length) {
+    return false;
+  }
 
   try {
-    await update(ref(database), writes);
+    await update(
+      ref(database),
+      writes
+    );
+
     return true;
   } catch (error) {
-    console.error('Moshroids gun-drop publish failed:', error);
+    console.error(
+      'Moshroids gun-drop publish failed:',
+      error
+    );
+
     return false;
   }
 }
 
 
 /*
- * Atomically claim one gun.
+ * ATOMIC PICKUP CLAIM
  *
- * runTransaction() is important here:
- * if two ships touch the same gun simultaneously, Firebase permits only
- * one transaction to delete the existing drop successfully.
+ * IMPORTANT:
+ *
+ * We do NOT use deletion itself as the claim.
+ *
+ * Instead Firebase atomically changes:
+ *
+ *     claimedBy: null
+ *
+ * to:
+ *
+ *     claimedBy: <winning UID>
+ *
+ * If two students hit the same gun at nearly the same time,
+ * runTransaction retries against the latest value. Only one UID
+ * can become the owner.
+ *
+ * After winning, that client removes the pickup node.
  */
 async function claimGunDrop(dropId) {
-  if (!currentUser || !dropId) return false;
+  if (!currentUser || !dropId) {
+    return false;
+  }
 
-  const dropRef = ref(database, `${gunDropsPath}/${dropId}`);
-  let claimedDrop = null;
+  const dropRef = ref(
+    database,
+    `${gunDropsPath}/${dropId}`
+  );
 
   try {
     const result = await runTransaction(
       dropRef,
-      (currentDrop) => {
-        if (!currentDrop) return;
-
-        if (
-          Number(currentDrop.expiresAt) > 0 &&
-          Date.now() >= Number(currentDrop.expiresAt)
-        ) {
-          return null;
+      (drop) => {
+        /*
+         * Returning undefined aborts the transaction.
+         */
+        if (!drop) {
+          return undefined;
         }
 
-        claimedDrop = currentDrop;
+        /*
+         * Somebody else already owns this pickup.
+         */
+        if (drop.claimedBy) {
+          return undefined;
+        }
+
+        const expiresAt =
+          Number(drop.expiresAt) || 0;
 
         /*
-         * Delete atomically. Only the client whose transaction commits
-         * against an existing value receives the gun.
+         * Expired guns cannot be collected.
          */
-        return null;
+        if (
+          expiresAt > 0 &&
+          Date.now() >= expiresAt
+        ) {
+          return undefined;
+        }
+
+        return {
+          ...drop,
+
+          claimedBy:
+            currentUser.uid,
+
+          claimedAt:
+            Date.now()
+        };
       },
-      { applyLocally: false }
+      {
+        applyLocally: false
+      }
     );
 
-    return Boolean(result.committed && claimedDrop);
+    if (!result.committed) {
+      return false;
+    }
+
+    const claimedDrop =
+      result.snapshot.val();
+
+    /*
+     * Do not trust "committed" alone.
+     * Verify that THIS browser owns the resulting claim.
+     */
+    if (
+      !claimedDrop ||
+      claimedDrop.claimedBy !==
+        currentUser.uid
+    ) {
+      return false;
+    }
+
+    /*
+     * The claim is now authoritative.
+     * Remove the pickup from Firebase.
+     *
+     * Even if this remove fails temporarily, every listener ignores
+     * claimed drops, so nobody else can collect it.
+     */
+    try {
+      await remove(dropRef);
+    } catch (error) {
+      console.warn(
+        'Gun was claimed but cleanup was delayed:',
+        error
+      );
+    }
+
+    return true;
   } catch (error) {
-    console.error('Moshroids gun pickup failed:', error);
+    console.error(
+      'Moshroids gun pickup failed:',
+      error
+    );
+
     return false;
   }
 }
 
 
 /*
- * Remove expired drops from Firebase.
+ * Expired gun cleanup.
  *
- * Every client may notice an expired drop, so remove() must be harmless
- * when another browser already removed it.
+ * Multiple browsers may notice the same expiration.
+ * That is fine: removing a node that is already gone is harmless.
  */
 async function removeExpiredGunDrop(dropId) {
-  if (!currentUser || !dropId) return;
+  if (!currentUser || !dropId) {
+    return false;
+  }
 
-  const drop = remoteGunDrops.get(dropId);
-  if (!drop || Date.now() < drop.expiresAt) return;
+  const drop =
+    remoteGunDrops.get(dropId);
+
+  if (
+    !drop ||
+    Date.now() <
+      drop.expiresAt
+  ) {
+    return false;
+  }
 
   try {
-    await remove(ref(database, `${gunDropsPath}/${dropId}`));
+    await remove(
+      ref(
+        database,
+        `${gunDropsPath}/${dropId}`
+      )
+    );
+
+    return true;
   } catch (error) {
-    console.error('Moshroids expired gun cleanup failed:', error);
+    console.error(
+      'Moshroids expired gun cleanup failed:',
+      error
+    );
+
+    return false;
   }
 }
 
@@ -410,37 +623,72 @@ function getGunDrops() {
    NETWORK SEND
    ========================================================= */
 
-async function publishLocalState(state, force = false) {
-  if (!connected || !playerRef || !currentUser) return;
+async function publishLocalState(
+  state,
+  force = false
+) {
+  if (
+    !connected ||
+    !playerRef ||
+    !currentUser
+  ) {
+    return false;
+  }
 
   const now = performance.now();
 
-  if (!force && now - lastNetworkSend < NETWORK_SEND_INTERVAL) return;
+  if (
+    !force &&
+    now - lastNetworkSend <
+      NETWORK_SEND_INTERVAL
+  ) {
+    return false;
+  }
 
   lastNetworkSend = now;
 
   try {
-    await update(playerRef, {
-      name: pilotName,
+    await update(
+      playerRef,
+      {
+        name: pilotName,
 
-      x: Number(state.x) || 0,
-      y: Number(state.y) || 0,
+        x: Number(state.x) || 0,
+        y: Number(state.y) || 0,
 
-      angle: Number(state.angle) || 0,
+        angle:
+          Number(state.angle) || 0,
 
-      velocityX: Number(state.velocityX) || 0,
-      velocityY: Number(state.velocityY) || 0,
+        velocityX:
+          Number(state.velocityX) || 0,
 
-      visible: state.visible !== false,
-      score: Number(state.score) || 0,
+        velocityY:
+          Number(state.velocityY) || 0,
 
-      guns: Math.max(1, Math.min(40, Number(state.guns) || 1)),
+        visible:
+          state.visible !== false,
 
-      updatedAt: serverTimestamp()
-    });
+        score:
+          Number(state.score) || 0,
+
+        guns:
+          clampGunCount(state.guns),
+
+        updatedAt:
+          serverTimestamp()
+      }
+    );
+
+    return true;
   } catch (error) {
-    console.error('Moshroids state update failed:', error);
+    console.error(
+      'Moshroids state update failed:',
+      error
+    );
+
     setNetworkStatus(false);
+
+    return false;
   }
 }
 
@@ -449,45 +697,121 @@ async function publishLocalState(state, force = false) {
    SMOOTH REMOTE MOVEMENT
    ========================================================= */
 
-function shortestAngleDifference(from, to) {
-  let difference = (to - from) % (Math.PI * 2);
+function shortestAngleDifference(
+  from,
+  to
+) {
+  let difference =
+    (to - from) %
+    (Math.PI * 2);
 
-  if (difference > Math.PI) difference -= Math.PI * 2;
-  if (difference < -Math.PI) difference += Math.PI * 2;
+  if (difference > Math.PI) {
+    difference -=
+      Math.PI * 2;
+  }
+
+  if (difference < -Math.PI) {
+    difference +=
+      Math.PI * 2;
+  }
 
   return difference;
 }
 
 
-function updateRemotePlayers(dt, worldWidth, worldHeight) {
-  const positionBlend = 1 - Math.pow(0.0005, dt);
-  const angleBlend = 1 - Math.pow(0.002, dt);
+function updateRemotePlayers(
+  dt,
+  worldWidth,
+  worldHeight
+) {
+  const positionBlend =
+    1 -
+    Math.pow(
+      0.0005,
+      dt
+    );
 
-  remotePlayers.forEach((player) => {
-    let deltaX = player.targetX - player.renderX;
-    let deltaY = player.targetY - player.renderY;
+  const angleBlend =
+    1 -
+    Math.pow(
+      0.002,
+      dt
+    );
 
-    if (Math.abs(deltaX) > worldWidth / 2) {
-      deltaX -= Math.sign(deltaX) * worldWidth;
+  remotePlayers.forEach(
+    (player) => {
+      let deltaX =
+        player.targetX -
+        player.renderX;
+
+      let deltaY =
+        player.targetY -
+        player.renderY;
+
+      /*
+       * Interpolate across wrapped arena boundaries using
+       * the shortest route instead of crossing the whole map.
+       */
+      if (
+        Math.abs(deltaX) >
+        worldWidth / 2
+      ) {
+        deltaX -=
+          Math.sign(deltaX) *
+          worldWidth;
+      }
+
+      if (
+        Math.abs(deltaY) >
+        worldHeight / 2
+      ) {
+        deltaY -=
+          Math.sign(deltaY) *
+          worldHeight;
+      }
+
+      player.renderX +=
+        deltaX *
+        positionBlend;
+
+      player.renderY +=
+        deltaY *
+        positionBlend;
+
+      if (player.renderX < 0) {
+        player.renderX +=
+          worldWidth;
+      }
+
+      if (
+        player.renderX >
+        worldWidth
+      ) {
+        player.renderX -=
+          worldWidth;
+      }
+
+      if (player.renderY < 0) {
+        player.renderY +=
+          worldHeight;
+      }
+
+      if (
+        player.renderY >
+        worldHeight
+      ) {
+        player.renderY -=
+          worldHeight;
+      }
+
+      player.renderAngle +=
+        shortestAngleDifference(
+          player.renderAngle,
+          player.targetAngle
+        ) *
+        angleBlend;
     }
-
-    if (Math.abs(deltaY) > worldHeight / 2) {
-      deltaY -= Math.sign(deltaY) * worldHeight;
-    }
-
-    player.renderX += deltaX * positionBlend;
-    player.renderY += deltaY * positionBlend;
-
-    if (player.renderX < 0) player.renderX += worldWidth;
-    if (player.renderX > worldWidth) player.renderX -= worldWidth;
-
-    if (player.renderY < 0) player.renderY += worldHeight;
-    if (player.renderY > worldHeight) player.renderY -= worldHeight;
-
-    player.renderAngle +=
-      shortestAngleDifference(player.renderAngle, player.targetAngle) *
-      angleBlend;
-  });
+  );
 }
 
 
@@ -495,43 +819,81 @@ function updateRemotePlayers(dt, worldWidth, worldHeight) {
    LOGIN
    ========================================================= */
 
-async function joinMultiplayer(name, initialState) {
-  const cleanedName = cleanPilotName(name);
+async function joinMultiplayer(
+  name,
+  initialState
+) {
+  const cleanedName =
+    cleanPilotName(name);
 
   if (!cleanedName) {
-    throw new Error('Enter a pilot name.');
+    throw new Error(
+      'Enter a pilot name.'
+    );
   }
 
-  applyPilotName(cleanedName);
-  setStatus('CONNECTING TO MOSH...');
+  applyPilotName(
+    cleanedName
+  );
 
-  if (pilotEnterButton) pilotEnterButton.disabled = true;
+  setStatus(
+    'CONNECTING TO MOSH...'
+  );
+
+  if (pilotEnterButton) {
+    pilotEnterButton.disabled =
+      true;
+  }
 
   try {
     await waitForAuth();
-    await createPlayerRecord(initialState);
+
+    await createPlayerRecord(
+      initialState
+    );
 
     startPlayerListener();
     startGunDropListener();
 
     setNetworkStatus(true);
-    setStatus('CONNECTED', 'connected');
 
-    if (loginOverlay) loginOverlay.classList.add('hidden');
+    setStatus(
+      'CONNECTED',
+      'connected'
+    );
+
+    if (loginOverlay) {
+      loginOverlay.classList.add(
+        'hidden'
+      );
+    }
 
     return {
-      uid: currentUser.uid,
-      name: pilotName
+      uid:
+        currentUser.uid,
+
+      name:
+        pilotName
     };
   } catch (error) {
-    console.error('Moshroids multiplayer login failed:', error);
+    console.error(
+      'Moshroids multiplayer login failed:',
+      error
+    );
 
     setNetworkStatus(false);
-    setStatus('CONNECTION FAILED — TRY AGAIN', 'error');
+
+    setStatus(
+      'CONNECTION FAILED — TRY AGAIN',
+      'error'
+    );
 
     throw error;
   } finally {
-    if (pilotEnterButton) pilotEnterButton.disabled = false;
+    if (pilotEnterButton) {
+      pilotEnterButton.disabled =
+        false;
+    }
   }
 }
 
@@ -540,43 +902,82 @@ async function joinMultiplayer(name, initialState) {
    LOGIN FORM
    ========================================================= */
 
-function bindPilotLogin(getInitialState, onJoined) {
-  if (!loginForm || !pilotNameInput) return;
+function bindPilotLogin(
+  getInitialState,
+  onJoined
+) {
+  if (
+    !loginForm ||
+    !pilotNameInput
+  ) {
+    return;
+  }
 
-  const rememberedName = localStorage.getItem('moshroidsPilotName');
+  /*
+   * Only the student's chosen display name is remembered.
+   * Authentication itself remains Firebase Anonymous Auth.
+   */
+  const rememberedName =
+    localStorage.getItem(
+      'moshroidsPilotName'
+    );
 
-  if (rememberedName) pilotNameInput.value = rememberedName;
+  if (rememberedName) {
+    pilotNameInput.value =
+      rememberedName;
+  }
 
   loginForm.addEventListener(
     'submit',
     async (event) => {
       event.preventDefault();
 
-      const name = cleanPilotName(pilotNameInput.value);
+      const name =
+        cleanPilotName(
+          pilotNameInput.value
+        );
 
       if (!name) {
-        setStatus('ENTER A PILOT NAME', 'error');
+        setStatus(
+          'ENTER A PILOT NAME',
+          'error'
+        );
+
         pilotNameInput.focus();
+
         return;
       }
 
       try {
-        const initialState = getInitialState();
+        const initialState =
+          getInitialState();
 
-        const identity = await joinMultiplayer(name, initialState);
+        const identity =
+          await joinMultiplayer(
+            name,
+            initialState
+          );
 
-        localStorage.setItem('moshroidsPilotName', name);
+        localStorage.setItem(
+          'moshroidsPilotName',
+          name
+        );
 
-        if (onJoined) onJoined(identity);
+        if (onJoined) {
+          onJoined(identity);
+        }
       } catch {
         /*
-         * Error already displayed by joinMultiplayer().
+         * joinMultiplayer already displays the connection error.
          */
       }
     }
   );
 
-  requestAnimationFrame(() => pilotNameInput.focus());
+  requestAnimationFrame(
+    () =>
+      pilotNameInput.focus()
+  );
 }
 
 
@@ -600,7 +1001,7 @@ async function leaveMultiplayer() {
       await remove(playerRef);
     } catch {
       /*
-       * onDisconnect is the fallback.
+       * onDisconnect remains the fallback.
        */
     }
   }
@@ -624,11 +1025,16 @@ function getRemotePlayers() {
 
 
 function getLocalIdentity() {
-  if (!currentUser) return null;
+  if (!currentUser) {
+    return null;
+  }
 
   return {
-    uid: currentUser.uid,
-    name: pilotName
+    uid:
+      currentUser.uid,
+
+    name:
+      pilotName
   };
 }
 
