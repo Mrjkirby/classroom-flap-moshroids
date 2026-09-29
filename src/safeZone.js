@@ -6,19 +6,14 @@
 //
 // The exact same geometry is used for drawing AND collision detection.
 //
-// IMPORTANT:
-// The L barriers sit inside the arena and point INWARD.
-// This leaves an open protected pocket between each L and the outer
-// corner, with room for ships to fly around either end of the L.
+// Each L now faces its OUTER CORNER.
+// There is still a two-ship-length gap between the barrier
+// and the arena edges so ships can enter and leave the safe area.
 
 const SHIP_LENGTH = 34;
 const ARM_LENGTH = SHIP_LENGTH * 7; // 238 world units
 const WALL_THICKNESS = 8;
 
-// Distance from each outer arena wall to the elbow of its L.
-//
-// Two ship lengths gives enough clearance to fly around the OUTER
-// ends of the barrier and enter/leave the protected corner pocket.
 const ENTRY_GAP = SHIP_LENGTH * 2; // 68 world units
 const WALL_OFFSET = ENTRY_GAP;
 
@@ -38,12 +33,11 @@ export class SafeZones {
   // Build the 8 solid wall segments:
   // 2 arms for each of the 4 corner Ls.
   //
-  // The elbow sits ENTRY_GAP from the two nearby arena walls.
-  // Both arms then extend INTO the arena.
+  // Each elbow sits ENTRY_GAP from its two nearby arena walls.
+  // The arms point TOWARD the corresponding outer corner.
   //
-  // This means the protected corner is NOT sealed.
-  // A ship can fly around either outer end of the L to enter/exit.
-
+  // Because the arms stop before reaching the arena walls,
+  // ships can fly around either end to enter/leave the safe area.
   rebuild() {
     const w = this.width;
     const h = this.height;
@@ -51,55 +45,39 @@ export class SafeZones {
     this.segments = [];
 
     // TOP LEFT
-    //
-    // Outer protected pocket:
-    // top-left corner.
-    //
-    // Arms point RIGHT and DOWN into arena.
+    // Arms point LEFT and UP.
     this.addL(
       WALL_OFFSET,
       WALL_OFFSET,
-      1,
-      1
+      -1,
+      -1
     );
 
     // TOP RIGHT
-    //
-    // Outer protected pocket:
-    // top-right corner.
-    //
-    // Arms point LEFT and DOWN into arena.
+    // Arms point RIGHT and UP.
     this.addL(
       w - WALL_OFFSET,
       WALL_OFFSET,
-      -1,
-      1
-    );
-
-    // BOTTOM LEFT
-    //
-    // Outer protected pocket:
-    // bottom-left corner.
-    //
-    // Arms point RIGHT and UP into arena.
-    this.addL(
-      WALL_OFFSET,
-      h - WALL_OFFSET,
       1,
       -1
     );
 
+    // BOTTOM LEFT
+    // Arms point LEFT and DOWN.
+    this.addL(
+      WALL_OFFSET,
+      h - WALL_OFFSET,
+      -1,
+      1
+    );
+
     // BOTTOM RIGHT
-    //
-    // Outer protected pocket:
-    // bottom-right corner.
-    //
-    // Arms point LEFT and UP into arena.
+    // Arms point RIGHT and DOWN.
     this.addL(
       w - WALL_OFFSET,
       h - WALL_OFFSET,
-      -1,
-      -1
+      1,
+      1
     );
   }
 
@@ -237,9 +215,7 @@ export class SafeZones {
 
     let closestCollision = null;
 
-    for (
-      const segment of this.segments
-    ) {
+    for (const segment of this.segments) {
       const closest =
         this.closestPointOnSegment(
           x,
@@ -270,8 +246,6 @@ export class SafeZones {
           normalX = dx / distance;
           normalY = dy / distance;
         } else {
-          // Fallback normal if object centre
-          // lies exactly on the wall.
           const segmentDX =
             segment.x2 - segment.x1;
 
@@ -329,8 +303,6 @@ export class SafeZones {
       return false;
     }
 
-    // Move the ship just outside
-    // the solid wall.
     const pushDistance =
       collision.penetration + 0.5;
 
@@ -342,11 +314,8 @@ export class SafeZones {
       collision.normalY *
       pushDistance;
 
-    // Remove only velocity travelling
-    // INTO the wall.
-    //
-    // This lets the ship slide along
-    // the L instead of stopping dead.
+    // Remove only velocity travelling INTO the wall.
+    // This lets the ship slide along the L.
     if (
       Number.isFinite(
         ship.velocityX
@@ -451,9 +420,7 @@ export class SafeZones {
     ctx.lineCap = 'square';
     ctx.lineJoin = 'miter';
 
-    for (
-      const segment of this.segments
-    ) {
+    for (const segment of this.segments) {
       ctx.beginPath();
 
       ctx.moveTo(
