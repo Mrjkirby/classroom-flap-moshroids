@@ -12,7 +12,10 @@ const WALL_THICKNESS = 8;
 
 // Distance from the arena's outer wall.
 // This creates the protected pocket behind each L.
-const WALL_OFFSET = ARM_LENGTH;
+// Leave enough room between each arm end and the arena wall
+// for a ship to fly into and out of the protected pocket.
+const ENTRY_GAP = SHIP_LENGTH * 2;
+const WALL_OFFSET = ARM_LENGTH + ENTRY_GAP;
 
 export class SafeZones {
   constructor(width, height) {
