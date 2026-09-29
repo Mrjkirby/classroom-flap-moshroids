@@ -1,84 +1,182 @@
-import { Bullet } from './bullet.js';
-import { drawWrapped, wrapPosition } from './physics.js';
+import {
+  drawWrapped,
+  wrapPosition
+} from './physics.js';
+
 
 export class Ship {
-  constructor(owner, x, y, controls, displayName = owner) {
-    this.owner = owner;
-    this.displayName = displayName;
+  constructor(
+    owner,
+    x,
+    y,
+    controls,
+    displayName = owner
+  ) {
+    this.owner =
+      owner;
 
-    this.x = x;
-    this.y = y;
+    this.displayName =
+      displayName;
 
-    this.velocityX = 0;
-    this.velocityY = 0;
+    this.x =
+      x;
+
+    this.y =
+      y;
+
+    this.velocityX =
+      0;
+
+    this.velocityY =
+      0;
 
     this.angle =
       owner === 'A'
         ? -Math.PI / 2
         : Math.PI / 2;
 
-    this.controls = controls;
+    this.controls =
+      controls;
 
-    this.radius = 15;
-    this.cooldown = 0;
-    this.invulnerable = 0;
+    this.radius =
+      15;
 
-    this.visible = true;
-    this.thrusting = false;
-    this.state = 'ACTIVE';
+    this.cooldown =
+      0;
+
+    this.invulnerable =
+      0;
+
+    this.visible =
+      true;
+
+    this.thrusting =
+      false;
+
+    this.state =
+      'ACTIVE';
 
     /*
      * Remote ships are display-only.
-     * Their movement comes from Firebase interpolation,
-     * never from local keyboard physics.
+     *
+     * Their movement comes from multiplayer interpolation.
+     * They never run local keyboard physics or local firing.
      */
-    this.remote = false;
+    this.remote =
+      false;
   }
 
-  update(dt, keys, width, height) {
-    if (this.remote) {
-      return null;
+
+  /* =======================================================
+     UPDATE
+     ======================================================= */
+
+  update(
+    dt,
+    keys,
+    width,
+    height
+  ) {
+    if (
+      this.remote ||
+      this.state !== 'ACTIVE'
+    ) {
+      return false;
     }
 
-    if (this.state !== 'ACTIVE') {
-      return null;
-    }
+    const frameScale =
+      dt * 60;
 
-    const frameScale = dt * 60;
+
+    /* -----------------------------------------------------
+       ROTATION
+       ----------------------------------------------------- */
 
     const turn =
-      (keys.has(this.controls.left) ? -1 : 0) +
-      (keys.has(this.controls.right) ? 1 : 0);
+      (
+        keys.has(
+          this.controls.left
+        )
+          ? -1
+          : 0
+      ) +
+      (
+        keys.has(
+          this.controls.right
+        )
+          ? 1
+          : 0
+      );
 
     this.angle +=
       turn *
-      (Math.PI / 18) *
+      (
+        Math.PI /
+        18
+      ) *
       frameScale;
 
+
+    /* -----------------------------------------------------
+       THRUST
+       ----------------------------------------------------- */
+
     const thrust =
-      (keys.has(this.controls.thrust) ? 1 : 0) -
-      (keys.has(this.controls.brake) ? 1 : 0);
+      (
+        keys.has(
+          this.controls.thrust
+        )
+          ? 1
+          : 0
+      ) -
+      (
+        keys.has(
+          this.controls.brake
+        )
+          ? 1
+          : 0
+      );
 
     this.thrusting =
       thrust !== 0;
 
     this.velocityX +=
-      Math.cos(this.angle) *
+      Math.cos(
+        this.angle
+      ) *
       thrust *
       0.25 *
       frameScale;
 
     this.velocityY +=
-      Math.sin(this.angle) *
+      Math.sin(
+        this.angle
+      ) *
       thrust *
       0.25 *
       frameScale;
 
-    const retention =
-      Math.pow(0.98, frameScale);
 
-    this.velocityX *= retention;
-    this.velocityY *= retention;
+    /* -----------------------------------------------------
+       DRAG
+       ----------------------------------------------------- */
+
+    const retention =
+      Math.pow(
+        0.98,
+        frameScale
+      );
+
+    this.velocityX *=
+      retention;
+
+    this.velocityY *=
+      retention;
+
+
+    /* -----------------------------------------------------
+       MAXIMUM SPEED
+       ----------------------------------------------------- */
 
     const speed =
       Math.hypot(
@@ -86,13 +184,23 @@ export class Ship {
         this.velocityY
       );
 
-    if (speed > 8) {
+    if (
+      speed > 8
+    ) {
       const factor =
         8 / speed;
 
-      this.velocityX *= factor;
-      this.velocityY *= factor;
+      this.velocityX *=
+        factor;
+
+      this.velocityY *=
+        factor;
     }
+
+
+    /* -----------------------------------------------------
+       POSITION
+       ----------------------------------------------------- */
 
     this.x +=
       this.velocityX *
@@ -108,34 +216,60 @@ export class Ship {
       height
     );
 
-    this.cooldown -= dt;
+
+    /* -----------------------------------------------------
+       TIMERS
+       ----------------------------------------------------- */
+
+    this.cooldown =
+      Math.max(
+        0,
+        this.cooldown -
+          dt
+      );
 
     this.invulnerable =
       Math.max(
         0,
-        this.invulnerable - dt
+        this.invulnerable -
+          dt
       );
+
+
+    /* -----------------------------------------------------
+       FIRE TRIGGER
+
+       Ship decides WHEN firing is allowed.
+
+       Ship does NOT create bullets.
+
+       weaponSystem decides:
+       - number of guns
+       - emitter positions
+       - firing directions
+
+       game/fire system creates the actual Bullet objects.
+       ----------------------------------------------------- */
 
     if (
-      keys.has(this.controls.fire) &&
+      keys.has(
+        this.controls.fire
+      ) &&
       this.cooldown <= 0
     ) {
-      this.cooldown = 0.18;
+      this.cooldown =
+        0.18;
 
-      return new Bullet(
-        this.x +
-          Math.cos(this.angle) * 16,
-        this.y +
-          Math.sin(this.angle) * 16,
-        this.angle,
-        this.velocityX,
-        this.velocityY,
-        this.owner
-      );
+      return true;
     }
 
-    return null;
+    return false;
   }
+
+
+  /* =======================================================
+     DESTROY
+     ======================================================= */
 
   destroy() {
     if (
@@ -145,36 +279,70 @@ export class Ship {
       return false;
     }
 
-    this.state = 'SPELLING';
-    this.visible = false;
+    this.state =
+      'SPELLING';
 
-    this.velocityX = 0;
-    this.velocityY = 0;
+    this.visible =
+      false;
 
-    this.thrusting = false;
+    this.velocityX =
+      0;
+
+    this.velocityY =
+      0;
+
+    this.thrusting =
+      false;
 
     return true;
   }
 
+
+  /* =======================================================
+     RESPAWN
+     ======================================================= */
+
   respawn() {
-    this.state = 'ACTIVE';
-    this.visible = true;
+    this.state =
+      'ACTIVE';
 
-    this.velocityX = 0;
-    this.velocityY = 0;
+    this.visible =
+      true;
 
-    this.cooldown = 0;
-    this.invulnerable = 1.5;
+    this.velocityX =
+      0;
+
+    this.velocityY =
+      0;
+
+    this.cooldown =
+      0;
+
+    this.invulnerable =
+      1.5;
   }
 
-  draw(ctx, width, height) {
+
+  /* =======================================================
+     DRAW
+     ======================================================= */
+
+  draw(
+    ctx,
+    width,
+    height
+  ) {
     if (
       !this.visible ||
       (
-        this.invulnerable > 0 &&
+        this.invulnerable >
+          0 &&
         Math.floor(
-          this.invulnerable * 10
-        ) % 2 === 0
+          this.invulnerable *
+          10
+        ) %
+          2 ===
+          0
       )
     ) {
       return;
@@ -185,21 +353,28 @@ export class Ship {
       this,
       width,
       height,
+
       (drawCtx) => {
         drawCtx.rotate(
           this.angle
         );
 
         /*
-         * Local ship remains orange.
-         * Multiplayer ships are cyan.
+         * Local ship = orange.
+         * Multiplayer ships = cyan.
          */
         drawCtx.strokeStyle =
           this.owner === 'A'
             ? '#ff875f'
             : '#72e6dd';
 
-        drawCtx.lineWidth = 1.5;
+        drawCtx.lineWidth =
+          1.5;
+
+
+        /* -----------------------------------------------
+           SHIP BODY
+           ----------------------------------------------- */
 
         drawCtx.beginPath();
 
@@ -224,9 +399,17 @@ export class Ship {
         );
 
         drawCtx.closePath();
+
         drawCtx.stroke();
 
-        if (this.thrusting) {
+
+        /* -----------------------------------------------
+           THRUST FLAME
+           ----------------------------------------------- */
+
+        if (
+          this.thrusting
+        ) {
           drawCtx.beginPath();
 
           drawCtx.moveTo(
@@ -247,10 +430,13 @@ export class Ship {
           drawCtx.stroke();
         }
 
-        /*
-         * Rotate back before drawing the pilot name
-         * so the name always remains upright.
-         */
+
+        /* -----------------------------------------------
+           PILOT NAME
+
+           Undo ship rotation so text remains upright.
+           ----------------------------------------------- */
+
         drawCtx.rotate(
           -this.angle
         );
@@ -273,7 +459,10 @@ export class Ship {
             this.owner
           )
             .trim()
-            .slice(0, 16)
+            .slice(
+              0,
+              16
+            )
             .toUpperCase();
 
         drawCtx.fillText(
