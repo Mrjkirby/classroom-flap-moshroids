@@ -8,9 +8,12 @@ import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
 import { weaponSystem } from './weaponSystem.js';
 import { drawWrapped, normalizeDelta, random, wrappedDistance } from './physics.js';
+
 import {
   bindPilotLogin,
   claimGunDrop,
+  destroySharedAsteroid,
+  getDestroyedAsteroids,
   getGunDrops,
   getLocalIdentity,
   getRemotePlayers,
@@ -20,29 +23,56 @@ import {
   updateRemotePlayers
 } from './multiplayer.js';
 
+
 const canvas = document.querySelector('#gameCanvas');
 const ctx = canvas.getContext('2d');
 const keys = new Set();
-const scoreNodes = { A: document.querySelector('#scoreA') };
+
+const scoreNodes = {
+  A: document.querySelector('#scoreA')
+};
+
 const startHint = document.querySelector('#startHint');
 const gameShell = document.querySelector('.game-shell');
+
 
 const spelling = new SpellingChallengeController({
   overlay: document.querySelector('#wormholeOverlay'),
   onComplete: respawnPlayer
 });
 
+
 let width = 0;
 let height = 0;
 let worldWidth = 0;
 let worldHeight = 0;
+
 let lastTime = performance.now();
+
 let hasStarted = false;
 let multiplayerJoined = false;
 let pickupInProgress = false;
 
+
+/*
+ * Prevent repeated destruction requests while Firebase is deciding
+ * which browser won the destruction transaction.
+ */
+const asteroidDestructionPending = new Set();
+
+
+/*
+ * Remember shared destructions we have already processed.
+ *
+ * This lets another player's asteroid destruction create ONE explosion
+ * on this browser when the Firebase destruction record arrives.
+ */
+const processedDestroyedAsteroids = new Set();
+
+
 const camera = new Camera();
 let safeZones = null;
+
 
 const world = {
   ships: [],
@@ -52,8 +82,12 @@ const world = {
   particles: [],
   mrK: null,
   mrKRespawnTimer: 0,
-  scores: { A: 0 }
+
+  scores: {
+    A: 0
+  }
 };
+
 
 const controls = {
   A: {
@@ -85,20 +119,28 @@ function resize() {
   worldWidth = width * 2.4;
   worldHeight = height * 2.4;
 
-  if (!safeZones) safeZones = new SafeZones(worldWidth, worldHeight);
-  else safeZones.resize(worldWidth, worldHeight);
+  if (!safeZones) {
+    safeZones = new SafeZones(worldWidth, worldHeight);
+  } else {
+    safeZones.resize(worldWidth, worldHeight);
+  }
 }
 
 
 /*
- * DETERMINISTIC ASTEROID FIELD
+ * SHARED DETERMINISTIC ASTEROID FIELD
  *
- * Do not use random() here.
+ * Every ordinary asteroid receives:
  *
- * Every browser using the same world dimensions receives the same
- * seven ordinary asteroids in the same locations with the same seeds.
+ * - the same starting ratio
+ * - the same seed
+ * - the same stable ID
  *
- * asteroid.js owns their deterministic shapes and keeps them stationary.
+ * asteroid.js uses the seed to determine its shape, direction,
+ * rotation and speed.
+ *
+ * Firebase does NOT transmit asteroid positions every frame.
+ * Firebase only synchronizes destruction.
  */
 function spawnAsteroids() {
   const layout = [
@@ -111,14 +153,32 @@ function spawnAsteroids() {
     [0.76, 0.72]
   ];
 
-  world.asteroids = layout.map(([xRatio, yRatio], index) =>
-    new Asteroid(
-      worldWidth * xRatio,
-      worldHeight * yRatio,
-      'large',
-      index + 1
-    )
+  world.asteroids = layout.map(
+    ([xRatio, yRatio], index) => {
+      const seed = index + 1;
+      const id = `asteroid-${seed}`;
+
+      return new Asteroid(
+        worldWidth * xRatio,
+        worldHeight * yRatio,
+        'large',
+        seed,
+        id
+      );
+    }
   );
+
+  /*
+   * A player joining after some asteroids have already been destroyed
+   * must not see those destroyed rocks.
+   */
+  if (multiplayerJoined) {
+    const destroyed = getDestroyedAsteroids();
+
+    world.asteroids = world.asteroids.filter(
+      (asteroid) => !destroyed.has(asteroid.id)
+    );
+  }
 }
 
 
@@ -130,28 +190,69 @@ function spawnMrK() {
 }
 
 
-function addExplosion(x, y, color, count = 10, spread = 4) {
-  for (let index = 0; index < count; index += 1) {
-    const angle = random(0, Math.PI * 2);
+function addExplosion(
+  x,
+  y,
+  color,
+  count = 10,
+  spread = 4
+) {
+  for (
+    let index = 0;
+    index < count;
+    index += 1
+  ) {
+    const angle = random(
+      0,
+      Math.PI * 2
+    );
 
     world.particles.push({
       x,
       y,
-      velocityX: Math.cos(angle) * random(1, spread),
-      velocityY: Math.sin(angle) * random(1, spread),
-      life: random(0.25, 0.65),
+
+      velocityX:
+        Math.cos(angle) *
+        random(1, spread),
+
+      velocityY:
+        Math.sin(angle) *
+        random(1, spread),
+
+      life:
+        random(0.25, 0.65),
+
       color,
-      length: random(3, 10)
+
+      length:
+        random(3, 10)
     });
   }
 }
 
 
 function addRockExplosion(x, y) {
-  addExplosion(x, y, '#ff875f', 70, 7);
-  addExplosion(x, y, '#f1f0ea', 45, 11);
+  addExplosion(
+    x,
+    y,
+    '#ff875f',
+    70,
+    7
+  );
 
-  for (let index = 0; index < 8; index += 1) {
+  addExplosion(
+    x,
+    y,
+    '#f1f0ea',
+    45,
+    11
+  );
+
+  for (
+    let index = 0;
+    index < 8;
+    index += 1
+  ) {
     addExplosion(
       x + random(-50, 50),
       y + random(-50, 50),
@@ -176,16 +277,23 @@ function reset() {
   world.bullets = [];
   world.missiles = [];
   world.particles = [];
+
   world.mrKRespawnTimer = 0;
-  world.scores = { A: 0 };
+
+  world.scores = {
+    A: 0
+  };
 
   weaponSystem.reset();
 
   spawnAsteroids();
   spawnMrK();
 
-  camera.x = worldWidth * 0.5;
-  camera.y = worldHeight * 0.5;
+  camera.x =
+    worldWidth * 0.5;
+
+  camera.y =
+    worldHeight * 0.5;
 
   camera.update(
     world.ships,
@@ -201,16 +309,192 @@ function reset() {
 
 function updateScores() {
   scoreNodes.A.textContent =
-    String(world.scores.A).padStart(5, '0');
+    String(world.scores.A)
+      .padStart(5, '0');
 }
 
 
 function suspendPlayerControls(playerId) {
   if (!controls[playerId]) return;
 
-  Object.values(controls[playerId]).forEach(
-    (control) => keys.delete(control)
+  Object.values(
+    controls[playerId]
+  ).forEach(
+    (control) =>
+      keys.delete(control)
   );
+}
+
+
+/* =========================================================
+   SHARED ASTEROIDS
+   ========================================================= */
+
+/*
+ * Apply destruction records received from Firebase.
+ *
+ * Example:
+ *
+ * Browser 1 destroys asteroid-4.
+ *
+ * Firebase:
+ * destroyedAsteroids/asteroid-4
+ *
+ * Browser 2 receives that record here.
+ *
+ * Browser 2 finds its local asteroid-4, creates the explosion at that
+ * asteroid's current position, and removes it.
+ *
+ * Same ID = same asteroid disappears for everyone.
+ */
+function syncDestroyedAsteroids() {
+  if (!multiplayerJoined) return;
+
+  const destroyed =
+    getDestroyedAsteroids();
+
+  destroyed.forEach(
+    (_record, asteroidId) => {
+      if (
+        processedDestroyedAsteroids.has(
+          asteroidId
+        )
+      ) {
+        return;
+      }
+
+      const asteroidIndex =
+        world.asteroids.findIndex(
+          (asteroid) =>
+            asteroid.id === asteroidId
+        );
+
+      if (asteroidIndex >= 0) {
+        const asteroid =
+          world.asteroids[
+            asteroidIndex
+          ];
+
+        addExplosion(
+          asteroid.x,
+          asteroid.y,
+          '#f1f0ea',
+          16,
+          4
+        );
+
+        world.asteroids.splice(
+          asteroidIndex,
+          1
+        );
+      }
+
+      processedDestroyedAsteroids.add(
+        asteroidId
+      );
+
+      asteroidDestructionPending.delete(
+        asteroidId
+      );
+    }
+  );
+}
+
+
+/*
+ * Destroy an ordinary asteroid through Firebase.
+ *
+ * The Firebase transaction in multiplayer.js makes the destruction
+ * authoritative. If two students hit the same asteroid simultaneously,
+ * only one destruction record wins.
+ *
+ * We remove the asteroid locally immediately so the shot feels
+ * responsive. If Firebase rejects/fails the destruction for an actual
+ * network reason, the asteroid is restored from its deterministic
+ * definition on the next reset rather than creating duplicate children.
+ */
+async function destroyAsteroid(
+  asteroid,
+  color = '#f1f0ea'
+) {
+  if (
+    !asteroid ||
+    !asteroid.id ||
+    asteroidDestructionPending.has(
+      asteroid.id
+    )
+  ) {
+    return false;
+  }
+
+  asteroidDestructionPending.add(
+    asteroid.id
+  );
+
+  const asteroidIndex =
+    world.asteroids.findIndex(
+      (candidate) =>
+        candidate.id === asteroid.id
+    );
+
+  if (asteroidIndex >= 0) {
+    world.asteroids.splice(
+      asteroidIndex,
+      1
+    );
+  }
+
+  /*
+   * The browser that caused the destruction gets immediate visual
+   * feedback. processedDestroyedAsteroids prevents another explosion
+   * when its own Firebase record comes back.
+   */
+  addExplosion(
+    asteroid.x,
+    asteroid.y,
+    color,
+    16,
+    4
+  );
+
+  try {
+    const destroyed =
+      await destroySharedAsteroid(
+        asteroid.id
+      );
+
+    /*
+     * result=false normally means another browser already destroyed
+     * this same asteroid. In that case keeping it removed is correct.
+     */
+    if (!destroyed) {
+      const shared =
+        getDestroyedAsteroids();
+
+      if (!shared.has(asteroid.id)) {
+        console.warn(
+          `Asteroid destruction was not confirmed: ${asteroid.id}`
+        );
+      }
+    }
+
+    processedDestroyedAsteroids.add(
+      asteroid.id
+    );
+
+    return destroyed;
+  } catch (error) {
+    console.error(
+      'Shared asteroid destruction failed:',
+      error
+    );
+
+    return false;
+  } finally {
+    asteroidDestructionPending.delete(
+      asteroid.id
+    );
+  }
 }
 
 
@@ -219,17 +503,21 @@ function suspendPlayerControls(playerId) {
    ========================================================= */
 
 async function dropLocalGuns(ship) {
-  const identity = getLocalIdentity();
+  const identity =
+    getLocalIdentity();
+
   if (!identity) return;
 
-  const gunCount = weaponSystem.getGunCount();
+  const gunCount =
+    weaponSystem.getGunCount();
 
-  const drops = weaponSystem.createDrops(
-    ship.x,
-    ship.y,
-    identity.uid,
-    gunCount
-  );
+  const drops =
+    weaponSystem.createDrops(
+      ship.x,
+      ship.y,
+      identity.uid,
+      gunCount
+    );
 
   /*
    * Death removes the complete arsenal.
@@ -245,23 +533,30 @@ async function dropLocalGuns(ship) {
 
 /*
  * Firebase timestamps use Date.now().
- * weaponSystem's animation/countdown uses performance.now().
+ * weaponSystem uses performance.now().
  *
- * Convert the shared Firebase expiration into the local performance
- * clock before storing it in weaponSystem.
+ * Convert shared expiration into the local performance clock.
  */
 function firebaseDropToLocal(drop) {
-  const remainingMs = Math.max(
-    0,
-    Number(drop.expiresAt) - Date.now()
-  );
+  const remainingMs =
+    Math.max(
+      0,
+      Number(drop.expiresAt) -
+        Date.now()
+    );
 
-  const localNow = performance.now();
+  const localNow =
+    performance.now();
 
   return {
     ...drop,
-    createdAt: localNow,
-    expiresAt: localNow + remainingMs
+
+    createdAt:
+      localNow,
+
+    expiresAt:
+      localNow +
+      remainingMs
   };
 }
 
@@ -269,34 +564,52 @@ function firebaseDropToLocal(drop) {
 function syncGunDrops() {
   if (!multiplayerJoined) return;
 
-  const sharedDrops = getGunDrops();
-  const sharedIds = new Set(sharedDrops.keys());
+  const sharedDrops =
+    getGunDrops();
 
-  sharedDrops.forEach((drop, id) => {
-    const existing = weaponSystem.drops.get(id);
-    const localDrop = firebaseDropToLocal(drop);
+  const sharedIds =
+    new Set(
+      sharedDrops.keys()
+    );
 
-    if (existing) {
-      existing.x = localDrop.x;
-      existing.y = localDrop.y;
-      existing.radius = localDrop.radius;
+  sharedDrops.forEach(
+    (drop, id) => {
+      const existing =
+        weaponSystem.drops.get(id);
 
-      /*
-       * Do not repeatedly restart the countdown.
-       * Only shorten it if Firebase says less time remains.
-       */
-      existing.expiresAt = Math.min(
-        existing.expiresAt,
-        localDrop.expiresAt
+      const localDrop =
+        firebaseDropToLocal(drop);
+
+      if (existing) {
+        existing.x =
+          localDrop.x;
+
+        existing.y =
+          localDrop.y;
+
+        existing.radius =
+          localDrop.radius;
+
+        existing.expiresAt =
+          Math.min(
+            existing.expiresAt,
+            localDrop.expiresAt
+          );
+
+        return;
+      }
+
+      weaponSystem.addDrop(
+        localDrop
       );
-
-      return;
     }
+  );
 
-    weaponSystem.addDrop(localDrop);
-  });
-
-  for (const id of [...weaponSystem.drops.keys()]) {
+  for (
+    const id of [
+      ...weaponSystem.drops.keys()
+    ]
+  ) {
     if (!sharedIds.has(id)) {
       weaponSystem.removeDrop(id);
     }
@@ -305,11 +618,18 @@ function syncGunDrops() {
 
 
 async function checkGunPickup() {
-  if (!multiplayerJoined || pickupInProgress) return;
+  if (
+    !multiplayerJoined ||
+    pickupInProgress
+  ) {
+    return;
+  }
 
-  const ship = world.ships.find(
-    (candidate) => candidate.owner === 'A'
-  );
+  const ship =
+    world.ships.find(
+      (candidate) =>
+        candidate.owner === 'A'
+    );
 
   if (
     !ship ||
@@ -319,18 +639,31 @@ async function checkGunPickup() {
     return;
   }
 
-  if (weaponSystem.getGunCount() >= 40) return;
+  if (
+    weaponSystem.getGunCount() >= 40
+  ) {
+    return;
+  }
 
-  const drop = weaponSystem.findPickup(ship);
+  const drop =
+    weaponSystem.findPickup(ship);
+
   if (!drop) return;
 
   pickupInProgress = true;
 
   try {
-    const claimed = await claimGunDrop(drop.id);
+    const claimed =
+      await claimGunDrop(
+        drop.id
+      );
+
     if (!claimed) return;
 
-    const pickup = weaponSystem.confirmPickup(drop.id);
+    const pickup =
+      weaponSystem.confirmPickup(
+        drop.id
+      );
 
     if (pickup) {
       addExplosion(
@@ -342,7 +675,7 @@ async function checkGunPickup() {
       );
 
       /*
-       * Immediately publish the new gun total.
+       * Immediately publish new gun total.
        */
       publishPlayerState(true);
     }
@@ -364,11 +697,15 @@ function updateGunDrops() {
 
   const now = Date.now();
 
-  getGunDrops().forEach((drop, id) => {
-    if (now >= drop.expiresAt) {
-      removeExpiredGunDrop(id);
+  getGunDrops().forEach(
+    (drop, id) => {
+      if (
+        now >= drop.expiresAt
+      ) {
+        removeExpiredGunDrop(id);
+      }
     }
-  });
+  );
 
   checkGunPickup();
 }
@@ -378,42 +715,70 @@ function updateGunDrops() {
    PLAYER DEATH / RESPAWN
    ========================================================= */
 
-function playerDestroyed(playerId, reason) {
-  if (playerId !== 'A') return false;
+function playerDestroyed(
+  playerId,
+  reason
+) {
+  if (playerId !== 'A') {
+    return false;
+  }
 
-  const ship = world.ships.find(
-    (candidate) => candidate.owner === playerId
-  );
+  const ship =
+    world.ships.find(
+      (candidate) =>
+        candidate.owner === playerId
+    );
 
-  if (!ship || !ship.destroy()) return false;
+  if (
+    !ship ||
+    !ship.destroy()
+  ) {
+    return false;
+  }
 
   dropLocalGuns(ship);
 
-  suspendPlayerControls(playerId);
+  suspendPlayerControls(
+    playerId
+  );
 
   spelling.begin({
     playerId,
     reason
   });
 
+  /*
+   * Make the invisible/dead state reach other browsers immediately.
+   */
+  publishPlayerState(true);
+
   return true;
 }
 
 
 function respawnPlayer(playerId) {
-  const ship = world.ships.find(
-    (candidate) => candidate.owner === playerId
-  );
+  const ship =
+    world.ships.find(
+      (candidate) =>
+        candidate.owner === playerId
+    );
 
   if (!ship) return;
 
   weaponSystem.setGunCount(1);
+
   ship.respawn();
+
+  publishPlayerState(true);
 }
 
 
 function releaseMissiles() {
-  for (let index = 0; index < 20; index += 1) {
+  for (
+    let index = 0;
+    index < 20;
+    index += 1
+  ) {
     const angle =
       (index / 20) *
       Math.PI *
@@ -430,6 +795,7 @@ function releaseMissiles() {
           world.mrK.radius,
 
         angle,
+
         world.mrK.radius
       )
     );
@@ -450,62 +816,89 @@ function syncRemoteShips(dt) {
     worldHeight
   );
 
-  const remotePlayers = getRemotePlayers();
-  const remoteIds = new Set(remotePlayers.keys());
+  const remotePlayers =
+    getRemotePlayers();
 
-  world.ships = world.ships.filter(
-    (ship) =>
-      ship.owner === 'A' ||
-      remoteIds.has(ship.owner)
-  );
-
-  remotePlayers.forEach((remote, uid) => {
-    let ship = world.ships.find(
-      (candidate) => candidate.owner === uid
+  const remoteIds =
+    new Set(
+      remotePlayers.keys()
     );
 
-    if (!ship) {
-      ship = new Ship(
-        uid,
-        remote.renderX,
-        remote.renderY,
-        {},
-        remote.name
-      );
+  world.ships =
+    world.ships.filter(
+      (ship) =>
+        ship.owner === 'A' ||
+        remoteIds.has(
+          ship.owner
+        )
+    );
+
+  remotePlayers.forEach(
+    (remote, uid) => {
+      let ship =
+        world.ships.find(
+          (candidate) =>
+            candidate.owner === uid
+        );
+
+      if (!ship) {
+        ship = new Ship(
+          uid,
+          remote.renderX,
+          remote.renderY,
+          {},
+          remote.name
+        );
+
+        ship.remote = true;
+
+        world.ships.push(ship);
+      }
 
       ship.remote = true;
-      world.ships.push(ship);
+      ship.displayName =
+        remote.name;
+
+      ship.x =
+        remote.renderX;
+
+      ship.y =
+        remote.renderY;
+
+      ship.angle =
+        remote.renderAngle;
+
+      ship.velocityX =
+        remote.velocityX;
+
+      ship.velocityY =
+        remote.velocityY;
+
+      ship.visible =
+        remote.visible;
+
+      ship.state =
+        remote.visible
+          ? 'ACTIVE'
+          : 'SPELLING';
+
+      ship.guns =
+        remote.guns;
     }
-
-    ship.remote = true;
-    ship.displayName = remote.name;
-
-    ship.x = remote.renderX;
-    ship.y = remote.renderY;
-
-    ship.angle = remote.renderAngle;
-
-    ship.velocityX = remote.velocityX;
-    ship.velocityY = remote.velocityY;
-
-    ship.visible = remote.visible;
-
-    ship.state =
-      remote.visible
-        ? 'ACTIVE'
-        : 'SPELLING';
-
-    ship.guns = remote.guns;
-  });
+  );
 }
 
 
-function publishPlayerState(force = false) {
+function publishPlayerState(
+  force = false
+) {
   if (!multiplayerJoined) return;
 
-  const ship = world.ships.find(
-    (candidate) => candidate.owner === 'A'
-  );
+  const ship =
+    world.ships.find(
+      (candidate) =>
+        candidate.owner === 'A'
+    );
 
   if (!ship) return;
 
@@ -514,14 +907,20 @@ function publishPlayerState(force = false) {
       x: ship.x,
       y: ship.y,
 
-      angle: ship.angle,
+      angle:
+        ship.angle,
 
-      velocityX: ship.velocityX,
-      velocityY: ship.velocityY,
+      velocityX:
+        ship.velocityX,
 
-      visible: ship.visible,
+      velocityY:
+        ship.velocityY,
 
-      score: world.scores.A,
+      visible:
+        ship.visible,
+
+      score:
+        world.scores.A,
 
       guns:
         weaponSystem.getGunCount()
@@ -536,36 +935,40 @@ function publishPlayerState(force = false) {
    ========================================================= */
 
 /*
- * Ship.update() still owns the fire cooldown.
+ * Ship.update() owns the cooldown.
  *
- * When Ship.update() says "fire now", we intentionally IGNORE the
- * single Bullet object it returned and instead use the weapon system
- * to produce one real Bullet for EVERY owned gun.
+ * Its returned single Bullet is used only as the FIRE TRIGGER.
+ *
+ * weaponSystem creates the actual emitters:
  *
  *  1 gun  = 1 bullet
  *  2 guns = 2 parallel bullets
  * ...
- * 10 guns = 10 forward bullets
+ * 10 guns = 10 forward
  * 11 guns = 10 forward + 1 backward
  * ...
  * 40 guns = 10 each direction
  */
 function fireWeapons(ship) {
   const emitters =
-    weaponSystem.getEmitters(ship);
-
-  emitters.forEach((emitter) => {
-    world.bullets.push(
-      new Bullet(
-        emitter.x,
-        emitter.y,
-        emitter.angle,
-        emitter.velocityX,
-        emitter.velocityY,
-        ship.owner
-      )
+    weaponSystem.getEmitters(
+      ship
     );
-  });
+
+  emitters.forEach(
+    (emitter) => {
+      world.bullets.push(
+        new Bullet(
+          emitter.x,
+          emitter.y,
+          emitter.angle,
+          emitter.velocityX,
+          emitter.velocityY,
+          ship.owner
+        )
+      );
+    }
+  );
 }
 
 
@@ -575,38 +978,42 @@ function fireWeapons(ship) {
 
 function update(dt) {
   syncRemoteShips(dt);
+  syncDestroyedAsteroids();
   updateGunDrops();
 
-  /*
-   * SHIPS
-   */
-  world.ships.forEach((ship) => {
-    const fireTrigger =
-      ship.update(
-        dt,
-        keys,
-        worldWidth,
-        worldHeight
-      );
 
-    if (
-      safeZones &&
-      ship.visible &&
-      !ship.remote
-    ) {
-      safeZones.blockShip(ship);
-    }
+  /* =======================================================
+     SHIPS
+     ======================================================= */
 
-    /*
-     * IMPORTANT:
-     *
-     * fireTrigger is NOT added to world.bullets.
-     * It only tells us Ship's cooldown says this firing cycle is valid.
-     */
-    if (fireTrigger && !ship.remote) {
-      fireWeapons(ship);
+  world.ships.forEach(
+    (ship) => {
+      const fireTrigger =
+        ship.update(
+          dt,
+          keys,
+          worldWidth,
+          worldHeight
+        );
+
+      if (
+        safeZones &&
+        ship.visible &&
+        !ship.remote
+      ) {
+        safeZones.blockShip(
+          ship
+        );
+      }
+
+      if (
+        fireTrigger &&
+        !ship.remote
+      ) {
+        fireWeapons(ship);
+      }
     }
-  });
+  );
 
   publishPlayerState();
 
@@ -648,9 +1055,11 @@ function update(dt) {
           addExplosion(
             bullet.x,
             bullet.y,
+
             bullet.owner === 'A'
               ? '#ff875f'
               : '#72e6dd',
+
             5,
             2
           );
@@ -675,46 +1084,32 @@ function update(dt) {
   );
 
 
-  /* ASTEROID → SAFE ZONE */
-
+  /*
+   * ASTEROID → SAFE ZONE
+   *
+   * No splitting.
+   *
+   * If a moving asteroid hits one of the protective L walls,
+   * destroy that asteroid through the SAME shared Firebase system.
+   * Therefore it disappears for everybody rather than only the
+   * browser that happened to calculate the wall collision first.
+   */
   if (safeZones) {
-    const survivingAsteroids = [];
-    const splitAsteroids = [];
-
-    world.asteroids.forEach(
-      (asteroid) => {
-        if (
-          !safeZones.hitsAsteroid(
+    world.asteroids
+      .filter(
+        (asteroid) =>
+          safeZones.hitsAsteroid(
             asteroid
           )
-        ) {
-          survivingAsteroids.push(
-            asteroid
+      )
+      .forEach(
+        (asteroid) => {
+          destroyAsteroid(
+            asteroid,
+            '#f1f0ea'
           );
-
-          return;
         }
-
-        addExplosion(
-          asteroid.x,
-          asteroid.y,
-          '#f1f0ea',
-          asteroid.size === 'small'
-            ? 10
-            : 16,
-          4
-        );
-
-        splitAsteroids.push(
-          ...asteroid.split()
-        );
-      }
-    );
-
-    world.asteroids = [
-      ...survivingAsteroids,
-      ...splitAsteroids
-    ];
+      );
   }
 
 
@@ -748,7 +1143,9 @@ function update(dt) {
   world.missiles =
     world.missiles.filter(
       (missile) => {
-        if (missile.life <= 0) {
+        if (
+          missile.life <= 0
+        ) {
           addExplosion(
             missile.x,
             missile.y,
@@ -832,8 +1229,14 @@ function update(dt) {
     bulletIndex -= 1
   ) {
     const bullet =
-      world.bullets[bulletIndex];
+      world.bullets[
+        bulletIndex
+      ];
 
+
+    /*
+     * BULLET → MISSILE
+     */
     const missileIndex =
       world.missiles.findIndex(
         (missile) =>
@@ -847,7 +1250,9 @@ function update(dt) {
           bullet.radius
       );
 
-    if (missileIndex >= 0) {
+    if (
+      missileIndex >= 0
+    ) {
       world.bullets.splice(
         bulletIndex,
         1
@@ -871,9 +1276,16 @@ function update(dt) {
     }
 
 
+    /*
+     * BULLET → ASTEROID
+     */
     const asteroidIndex =
       world.asteroids.findIndex(
         (asteroid) =>
+          !asteroidDestructionPending.has(
+            asteroid.id
+          ) &&
+
           wrappedDistance(
             bullet,
             asteroid,
@@ -884,52 +1296,76 @@ function update(dt) {
           bullet.radius
       );
 
-    if (asteroidIndex < 0) {
+    if (
+      asteroidIndex < 0
+    ) {
       continue;
     }
+
 
     const asteroid =
       world.asteroids[
         asteroidIndex
       ];
 
+
+    /*
+     * The bullet is consumed immediately.
+     */
     world.bullets.splice(
       bulletIndex,
       1
     );
 
-    world.asteroids.splice(
-      asteroidIndex,
-      1
-    );
 
-    if (
-      world.scores[
-        bullet.owner
-      ] !== undefined
-    ) {
-      world.scores[
-        bullet.owner
-      ] += asteroid.points;
+    /*
+     * Only our local bullets exist in this browser at present.
+     *
+     * Claim the asteroid through Firebase.
+     * No split children are created.
+     */
+    const asteroidId =
+      asteroid.id;
 
-      updateScores();
-    }
+    const asteroidPoints =
+      asteroid.points;
 
-    addExplosion(
-      asteroid.x,
-      asteroid.y,
+
+    destroyAsteroid(
+      asteroid,
 
       bullet.owner === 'A'
         ? '#ff875f'
-        : '#72e6dd',
+        : '#72e6dd'
+    ).then(
+      (wonDestruction) => {
+        /*
+         * Award points only to the browser that successfully created
+         * the authoritative Firebase destruction record.
+         *
+         * This prevents two students receiving points for the same rock.
+         */
+        if (
+          wonDestruction &&
+          bullet.owner === 'A'
+        ) {
+          world.scores.A +=
+            asteroidPoints;
 
-      asteroid.size === 'small'
-        ? 14
-        : 9
-    );
+          updateScores();
 
-    world.asteroids.push(
-      ...asteroid.split()
+          publishPlayerState(
+            true
+          );
+        }
+      }
+    ).catch(
+      (error) => {
+        console.error(
+          `Failed to destroy ${asteroidId}:`,
+          error
+        );
+      }
     );
   }
 
@@ -1060,6 +1496,7 @@ function update(dt) {
      */
     if (
       target.owner === 'A' &&
+
       playerDestroyed(
         'A',
         'enemy-bullet'
@@ -1193,44 +1630,41 @@ function update(dt) {
     localShip &&
     localShip.visible
   ) {
-    const asteroidIndex =
-      world.asteroids.findIndex(
-        (asteroid) =>
+    const asteroid =
+      world.asteroids.find(
+        (candidate) =>
           wrappedDistance(
             localShip,
-            asteroid,
+            candidate,
             worldWidth,
             worldHeight
           ) <
-          asteroid.radius +
+          candidate.radius +
           11
       );
 
+
+    /*
+     * IMPORTANT:
+     *
+     * Crashing a ship into an asteroid destroys the SHIP,
+     * not the asteroid.
+     *
+     * The asteroid remains part of the shared world.
+     */
     if (
-      asteroidIndex >= 0 &&
+      asteroid &&
+
       playerDestroyed(
         'A',
         'asteroid'
       )
     ) {
-      const asteroid =
-        world.asteroids.splice(
-          asteroidIndex,
-          1
-        )[0];
-
       addExplosion(
         localShip.x,
         localShip.y,
         '#ff875f',
         22
-      );
-
-      addExplosion(
-        asteroid.x,
-        asteroid.y,
-        '#f1f0ea',
-        14
       );
     }
   }
@@ -1240,12 +1674,18 @@ function update(dt) {
      RESPAWNS
      ======================================================= */
 
-  if (!world.asteroids.length) {
-    spawnAsteroids();
-  }
+  /*
+   * DO NOT automatically call spawnAsteroids() when the array becomes
+   * empty. Those asteroids may all be legitimately destroyed in the
+   * shared Firebase world.
+   *
+   * A future new-round/reset mechanism can clear destroyedAsteroids
+   * and create a fresh field deliberately.
+   */
 
   if (!world.mrK) {
-    world.mrKRespawnTimer -= dt;
+    world.mrKRespawnTimer -=
+      dt;
 
     if (
       world.mrKRespawnTimer <= 0
@@ -1253,6 +1693,7 @@ function update(dt) {
       spawnMrK();
     }
   }
+
 
   camera.update(
     world.ships,
@@ -1271,8 +1712,12 @@ function update(dt) {
 function drawGrid() {
   ctx.save();
 
-  ctx.globalAlpha = 0.16;
-  ctx.strokeStyle = '#28302f';
+  ctx.globalAlpha =
+    0.16;
+
+  ctx.strokeStyle =
+    '#28302f';
+
   ctx.lineWidth = 1;
 
   for (
@@ -1281,8 +1726,17 @@ function drawGrid() {
     x += 48
   ) {
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, worldHeight);
+
+    ctx.moveTo(
+      x,
+      0
+    );
+
+    ctx.lineTo(
+      x,
+      worldHeight
+    );
+
     ctx.stroke();
   }
 
@@ -1292,8 +1746,17 @@ function drawGrid() {
     y += 48
   ) {
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(worldWidth, y);
+
+    ctx.moveTo(
+      0,
+      y
+    );
+
+    ctx.lineTo(
+      worldWidth,
+      y
+    );
+
     ctx.stroke();
   }
 
@@ -1308,6 +1771,7 @@ function drawWorld() {
     safeZones.draw(ctx);
   }
 
+
   world.asteroids.forEach(
     (asteroid) =>
       asteroid.draw(
@@ -1317,6 +1781,7 @@ function drawWorld() {
       )
   );
 
+
   if (world.mrK) {
     world.mrK.draw(
       ctx,
@@ -1325,6 +1790,7 @@ function drawWorld() {
     );
   }
 
+
   world.bullets.forEach(
     (bullet) =>
       drawWrapped(
@@ -1332,10 +1798,14 @@ function drawWorld() {
         bullet,
         worldWidth,
         worldHeight,
+
         (drawCtx) =>
-          bullet.draw(drawCtx)
+          bullet.draw(
+            drawCtx
+          )
       )
   );
+
 
   world.missiles.forEach(
     (missile) =>
@@ -1346,6 +1816,7 @@ function drawWorld() {
       )
   );
 
+
   world.ships.forEach(
     (ship) =>
       ship.draw(
@@ -1355,10 +1826,12 @@ function drawWorld() {
       )
   );
 
+
   /*
    * Flashing red gun pickups and countdown.
    */
   weaponSystem.draw(ctx);
+
 
   world.particles.forEach(
     (particle) => {
@@ -1407,7 +1880,8 @@ function draw() {
     height
   );
 
-  ctx.fillStyle = '#000';
+  ctx.fillStyle =
+    '#000';
 
   ctx.fillRect(
     0,
@@ -1442,7 +1916,8 @@ function draw() {
 function frame(now) {
   const dt =
     normalizeDelta(
-      now - lastTime
+      now -
+      lastTime
     );
 
   lastTime = now;
@@ -1455,7 +1930,9 @@ function frame(now) {
 
   draw();
 
-  requestAnimationFrame(frame);
+  requestAnimationFrame(
+    frame
+  );
 }
 
 
@@ -1504,13 +1981,16 @@ bindPilotLogin(
         -Math.PI / 2,
 
       velocityX:
-        ship?.velocityX ?? 0,
+        ship?.velocityX ??
+        0,
 
       velocityY:
-        ship?.velocityY ?? 0,
+        ship?.velocityY ??
+        0,
 
       visible:
-        ship?.visible !== false,
+        ship?.visible !==
+        false,
 
       score:
         world.scores.A,
@@ -1519,6 +1999,7 @@ bindPilotLogin(
         weaponSystem.getGunCount()
     };
   },
+
 
   (identity) => {
     const ship =
@@ -1532,7 +2013,15 @@ bindPilotLogin(
         identity.name;
     }
 
-    multiplayerJoined = true;
+    multiplayerJoined =
+      true;
+
+    /*
+     * Immediately remove asteroids that were destroyed before
+     * this player joined.
+     */
+    syncDestroyedAsteroids();
+
     hasStarted = true;
 
     startHint.classList.add(
@@ -1556,6 +2045,7 @@ gameShell.style.setProperty(
 
 gameShell.addEventListener(
   'input',
+
   (event) => {
     if (
       event.target.id !==
@@ -1570,13 +2060,18 @@ gameShell.addEventListener(
     );
 
     event.target
-      .closest('.zoom-control')
-      .querySelector('output')
+      .closest(
+        '.zoom-control'
+      )
+      .querySelector(
+        'output'
+      )
       .textContent =
         `${Math.round(
           Number(
             event.target.value
-          ) * 100
+          ) *
+          100
         )}%`;
   }
 );
@@ -1588,6 +2083,7 @@ gameShell.addEventListener(
 
 document.addEventListener(
   'keydown',
+
   (event) => {
     if (
       event.target.closest(
@@ -1611,7 +2107,9 @@ document.addEventListener(
         (set) =>
           Object.values(
             set
-          ).includes(key)
+          ).includes(
+            key
+          )
       )
     ) {
       event.preventDefault();
@@ -1627,12 +2125,14 @@ document.addEventListener(
 
     canvas.focus();
   },
+
   true
 );
 
 
 document.addEventListener(
   'keyup',
+
   (event) => {
     if (
       event.target.closest(
@@ -1650,6 +2150,7 @@ document.addEventListener(
       keyName(event)
     );
   },
+
   true
 );
 
@@ -1661,17 +2162,22 @@ window.addEventListener(
 
 
 /*
- * Keep the prototype's existing resize/reset behaviour.
+ * Preserve the prototype's resize behaviour.
  *
- * NOTE:
- * both browsers must have the same arena dimensions for deterministic
- * ratio-based asteroid positions to match exactly.
+ * Shared Firebase destruction records are reapplied after reset(),
+ * so resizing cannot resurrect an asteroid that another player
+ * already destroyed.
  */
 window.addEventListener(
   'resize',
+
   () => {
     resize();
     reset();
+
+    if (multiplayerJoined) {
+      syncDestroyedAsteroids();
+    }
   }
 );
 
@@ -1682,4 +2188,7 @@ window.addEventListener(
 
 resize();
 reset();
-requestAnimationFrame(frame);
+
+requestAnimationFrame(
+  frame
+);
