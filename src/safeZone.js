@@ -1,46 +1,42 @@
-// Corner safe-zone barriers for Moshroids.
+// Functional corner safe-zone barriers for Moshroids.
 //
 // Each L has two equal arms:
 //   7 ship lengths horizontal
 //   7 ship lengths vertical
 //
-// These are visual barriers only for now.
-// Collision behaviour will be added after the geometry is verified in-game.
+// The exact same geometry is used for drawing AND collision detection.
 
 const SHIP_LENGTH = 34;
 const ARM_LENGTH = SHIP_LENGTH * 7; // 238 world units
 const WALL_THICKNESS = 8;
 
 // Distance from the arena's outer wall.
-// This creates a protected pocket behind each L.
+// This creates the protected pocket behind each L.
 const WALL_OFFSET = ARM_LENGTH;
 
 export class SafeZones {
   constructor(width, height) {
     this.width = width;
     this.height = height;
+    this.rebuild();
   }
 
   resize(width, height) {
     this.width = width;
     this.height = height;
+    this.rebuild();
   }
 
-  draw(ctx) {
+  // Build the 8 solid wall segments:
+  // 2 arms for each of the 4 corner Ls.
+  rebuild() {
     const w = this.width;
     const h = this.height;
 
-    ctx.save();
-
-    ctx.strokeStyle = '#72e6dd';
-    ctx.lineWidth = WALL_THICKNESS;
-    ctx.lineCap = 'square';
-    ctx.lineJoin = 'miter';
+    this.segments = [];
 
     // TOP LEFT
-    // Protected pocket is above/left of the L.
-    this.drawL(
-      ctx,
+    this.addL(
       WALL_OFFSET,
       WALL_OFFSET,
       -1,
@@ -48,9 +44,7 @@ export class SafeZones {
     );
 
     // TOP RIGHT
-    // Protected pocket is above/right of the L.
-    this.drawL(
-      ctx,
+    this.addL(
       w - WALL_OFFSET,
       WALL_OFFSET,
       1,
@@ -58,9 +52,7 @@ export class SafeZones {
     );
 
     // BOTTOM LEFT
-    // Protected pocket is below/left of the L.
-    this.drawL(
-      ctx,
+    this.addL(
       WALL_OFFSET,
       h - WALL_OFFSET,
       -1,
@@ -68,38 +60,314 @@ export class SafeZones {
     );
 
     // BOTTOM RIGHT
-    // Protected pocket is below/right of the L.
-    this.drawL(
-      ctx,
+    this.addL(
       w - WALL_OFFSET,
       h - WALL_OFFSET,
       1,
       1
     );
-
-    ctx.restore();
   }
 
-  drawL(ctx, cornerX, cornerY, horizontalDirection, verticalDirection) {
-    ctx.beginPath();
+  addL(cornerX, cornerY, horizontalDirection, verticalDirection) {
+    // Horizontal arm.
+    this.segments.push({
+      x1: cornerX,
+      y1: cornerY,
+      x2: cornerX + horizontalDirection * ARM_LENGTH,
+      y2: cornerY
+    });
 
-    // Horizontal arm: exactly 7 ship lengths.
-    ctx.moveTo(cornerX, cornerY);
-    ctx.lineTo(
-      cornerX + horizontalDirection * ARM_LENGTH,
-      cornerY
+    // Vertical arm.
+    this.segments.push({
+      x1: cornerX,
+      y1: cornerY,
+      x2: cornerX,
+      y2: cornerY + verticalDirection * ARM_LENGTH
+    });
+  }
+
+  // Generic circular-object collision.
+  //
+  // Works for:
+  //   ships
+  //   bullets / lasers
+  //   asteroids
+  //   missiles
+  //
+  // Pass either the object itself or x/y/radius values.
+  hits(objectOrX, y, radius = 0) {
+    let x;
+
+    if (typeof objectOrX === 'object') {
+      x = objectOrX.x;
+      y = objectOrX.y;
+      radius = objectOrX.radius ?? radius;
+    } else {
+      x = objectOrX;
+    }
+
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y)
+    ) {
+      return false;
+    }
+
+    const collisionRadius =
+      Math.max(0, radius) +
+      WALL_THICKNESS / 2;
+
+    return this.segments.some((segment) =>
+      this.circleHitsSegment(
+        x,
+        y,
+        collisionRadius,
+        segment
+      )
+    );
+  }
+
+  hitsShip(ship) {
+    return this.hits(
+      ship.x,
+      ship.y,
+      ship.radius ?? SHIP_LENGTH * 0.35
+    );
+  }
+
+  hitsBullet(bullet) {
+    return this.hits(
+      bullet.x,
+      bullet.y,
+      bullet.radius ?? 3
+    );
+  }
+
+  hitsAsteroid(asteroid) {
+    return this.hits(
+      asteroid.x,
+      asteroid.y,
+      asteroid.radius ?? 0
+    );
+  }
+
+  hitsMissile(missile) {
+    return this.hits(
+      missile.x,
+      missile.y,
+      missile.radius ?? 0
+    );
+  }
+
+  // Returns the nearest wall collision information.
+  // Useful for blocking a ship without destroying it.
+  getCollision(objectOrX, y, radius = 0) {
+    let x;
+
+    if (typeof objectOrX === 'object') {
+      x = objectOrX.x;
+      y = objectOrX.y;
+      radius = objectOrX.radius ?? radius;
+    } else {
+      x = objectOrX;
+    }
+
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y)
+    ) {
+      return null;
+    }
+
+    const collisionRadius =
+      Math.max(0, radius) +
+      WALL_THICKNESS / 2;
+
+    let closestCollision = null;
+
+    for (const segment of this.segments) {
+      const closest = this.closestPointOnSegment(
+        x,
+        y,
+        segment
+      );
+
+      const dx = x - closest.x;
+      const dy = y - closest.y;
+      const distance = Math.hypot(dx, dy);
+
+      if (distance >= collisionRadius) {
+        continue;
+      }
+
+      if (
+        !closestCollision ||
+        distance < closestCollision.distance
+      ) {
+        let normalX;
+        let normalY;
+
+        if (distance > 0.0001) {
+          normalX = dx / distance;
+          normalY = dy / distance;
+        } else {
+          // Fallback normal if object centre lies exactly on wall.
+          const segmentDX = segment.x2 - segment.x1;
+          const segmentDY = segment.y2 - segment.y1;
+          const segmentLength =
+            Math.hypot(segmentDX, segmentDY) || 1;
+
+          normalX = -segmentDY / segmentLength;
+          normalY = segmentDX / segmentLength;
+        }
+
+        closestCollision = {
+          segment,
+          closestX: closest.x,
+          closestY: closest.y,
+          normalX,
+          normalY,
+          distance,
+          penetration:
+            collisionRadius - distance
+        };
+      }
+    }
+
+    return closestCollision;
+  }
+
+  // Push a ship back outside the barrier.
+  //
+  // IMPORTANT:
+  // touching the L does NOT destroy the ship.
+  blockShip(ship) {
+    const radius =
+      ship.radius ?? SHIP_LENGTH * 0.35;
+
+    const collision =
+      this.getCollision(
+        ship.x,
+        ship.y,
+        radius
+      );
+
+    if (!collision) {
+      return false;
+    }
+
+    // Move the ship just outside the solid wall.
+    const pushDistance =
+      collision.penetration + 0.5;
+
+    ship.x +=
+      collision.normalX * pushDistance;
+
+    ship.y +=
+      collision.normalY * pushDistance;
+
+    // Remove only the velocity travelling INTO the wall.
+    //
+    // This lets the ship slide along the L rather than
+    // stopping dead.
+    if (
+      Number.isFinite(ship.velocityX) &&
+      Number.isFinite(ship.velocityY)
+    ) {
+      const velocityIntoWall =
+        ship.velocityX * collision.normalX +
+        ship.velocityY * collision.normalY;
+
+      if (velocityIntoWall < 0) {
+        ship.velocityX -=
+          velocityIntoWall *
+          collision.normalX;
+
+        ship.velocityY -=
+          velocityIntoWall *
+          collision.normalY;
+      }
+    }
+
+    return true;
+  }
+
+  circleHitsSegment(x, y, radius, segment) {
+    const closest =
+      this.closestPointOnSegment(
+        x,
+        y,
+        segment
+      );
+
+    const dx = x - closest.x;
+    const dy = y - closest.y;
+
+    return (
+      dx * dx + dy * dy <=
+      radius * radius
+    );
+  }
+
+  closestPointOnSegment(x, y, segment) {
+    const dx =
+      segment.x2 - segment.x1;
+
+    const dy =
+      segment.y2 - segment.y1;
+
+    const lengthSquared =
+      dx * dx + dy * dy;
+
+    if (lengthSquared === 0) {
+      return {
+        x: segment.x1,
+        y: segment.y1
+      };
+    }
+
+    let t =
+      (
+        (x - segment.x1) * dx +
+        (y - segment.y1) * dy
+      ) / lengthSquared;
+
+    t = Math.max(
+      0,
+      Math.min(1, t)
     );
 
-    // Return to elbow.
-    ctx.moveTo(cornerX, cornerY);
+    return {
+      x: segment.x1 + t * dx,
+      y: segment.y1 + t * dy
+    };
+  }
 
-    // Vertical arm: exactly 7 ship lengths.
-    ctx.lineTo(
-      cornerX,
-      cornerY + verticalDirection * ARM_LENGTH
-    );
+  draw(ctx) {
+    ctx.save();
 
-    ctx.stroke();
+    ctx.strokeStyle = '#72e6dd';
+    ctx.lineWidth = WALL_THICKNESS;
+    ctx.lineCap = 'square';
+    ctx.lineJoin = 'miter';
+
+    for (const segment of this.segments) {
+      ctx.beginPath();
+
+      ctx.moveTo(
+        segment.x1,
+        segment.y1
+      );
+
+      ctx.lineTo(
+        segment.x2,
+        segment.y2
+      );
+
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 }
 
