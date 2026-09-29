@@ -1,9 +1,182 @@
-import { drawWrapped, random, TAU, wrapPosition } from './physics.js';
+import { drawWrapped, random, TAU } from './physics.js';
 
 export class MrKRock {
-  constructor(x, y) { this.x=x; this.y=y; this.radius=105; this.velocityX=random(-.18,.18); this.velocityY=random(-.18,.18); this.angle=random(0,TAU); this.rotation=random(-.08,.08); this.maxHealth=1000; this.health=1000; this.points=1000; this.vertices=Array.from({length:14},(_,index)=>({angle:index/14*TAU,radius:this.radius*random(.82,1.16)})); this.cracks=Array.from({length:8},()=>({angle:random(0,TAU),length:random(.35,.8)})); }
-  update(dt,worldWidth,worldHeight) { const frameScale=dt*60; this.x+=this.velocityX*frameScale; this.y+=this.velocityY*frameScale; this.angle+=this.rotation*frameScale; wrapPosition(this,worldWidth,worldHeight); }
-  damage(amount=1) { this.health=Math.max(0,this.health-amount); return this.health===0; }
-  draw(ctx,worldWidth,worldHeight) { drawWrapped(ctx,this,worldWidth,worldHeight,(drawCtx)=>{ drawCtx.rotate(this.angle); drawCtx.strokeStyle='#f4f1df'; drawCtx.lineWidth=2; drawCtx.beginPath(); this.vertices.forEach((vertex,index)=>{ const x=Math.cos(vertex.angle)*vertex.radius; const y=Math.sin(vertex.angle)*vertex.radius; index?drawCtx.lineTo(x,y):drawCtx.moveTo(x,y); }); drawCtx.closePath(); drawCtx.stroke(); drawCtx.save(); drawCtx.rotate(-this.angle); drawCtx.fillStyle='#ff875f'; drawCtx.font='700 22px Barlow Condensed,sans-serif'; drawCtx.textAlign='center'; drawCtx.textBaseline='middle'; drawCtx.fillText('MR. K',0,-5); drawCtx.font='10px Space Mono,monospace'; drawCtx.fillStyle='#f1f0ea'; drawCtx.fillText(`${this.health} / 1000`,0,17); drawCtx.restore(); if (this.health<750) this.drawCracks(drawCtx); }); }
-  drawCracks(ctx) { ctx.strokeStyle=this.health<250?'#ff875f':'#8f9690'; ctx.lineWidth=this.health<500?1.5:1; this.cracks.slice(0,this.health<250?8:this.health<500?5:3).forEach((crack)=>{ ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(crack.angle)*this.radius*crack.length,Math.sin(crack.angle)*this.radius*crack.length); ctx.stroke(); }); }
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+
+    this.radius = 105;
+
+    // MR. K moves vertically only.
+    // His X position is locked to the centre lane.
+    this.velocityX = 0;
+    this.velocityY = 0.65;
+
+    this.angle = random(0, TAU);
+    this.rotation = random(-0.08, 0.08);
+
+    this.maxHealth = 1000;
+    this.health = 1000;
+    this.points = 1000;
+
+    this.vertices = Array.from(
+      { length: 14 },
+      (_, index) => ({
+        angle: (index / 14) * TAU,
+        radius:
+          this.radius * random(0.82, 1.16)
+      })
+    );
+
+    this.cracks = Array.from(
+      { length: 8 },
+      () => ({
+        angle: random(0, TAU),
+        length: random(0.35, 0.8)
+      })
+    );
+  }
+
+  update(dt, worldWidth, worldHeight) {
+    const frameScale = dt * 60;
+
+    // Lock MR. K to the horizontal centre.
+    // This prevents any sideways drift into the corner safe zones.
+    this.x = worldWidth / 2;
+
+    // Travel straight down.
+    this.y +=
+      this.velocityY * frameScale;
+
+    // Keep the existing visual rotation.
+    this.angle +=
+      this.rotation * frameScale;
+
+    // Once the entire rock has passed below the arena,
+    // place it completely above the top and repeat.
+    if (
+      this.y - this.radius >
+      worldHeight
+    ) {
+      this.y = -this.radius;
+    }
+  }
+
+  damage(amount = 1) {
+    this.health = Math.max(
+      0,
+      this.health - amount
+    );
+
+    return this.health === 0;
+  }
+
+  draw(ctx, worldWidth, worldHeight) {
+    drawWrapped(
+      ctx,
+      this,
+      worldWidth,
+      worldHeight,
+      (drawCtx) => {
+        drawCtx.rotate(this.angle);
+
+        drawCtx.strokeStyle = '#f4f1df';
+        drawCtx.lineWidth = 2;
+
+        drawCtx.beginPath();
+
+        this.vertices.forEach(
+          (vertex, index) => {
+            const x =
+              Math.cos(vertex.angle) *
+              vertex.radius;
+
+            const y =
+              Math.sin(vertex.angle) *
+              vertex.radius;
+
+            if (index) {
+              drawCtx.lineTo(x, y);
+            } else {
+              drawCtx.moveTo(x, y);
+            }
+          }
+        );
+
+        drawCtx.closePath();
+        drawCtx.stroke();
+
+        drawCtx.save();
+
+        drawCtx.rotate(-this.angle);
+
+        drawCtx.fillStyle = '#ff875f';
+        drawCtx.font =
+          '700 22px Barlow Condensed,sans-serif';
+
+        drawCtx.textAlign = 'center';
+        drawCtx.textBaseline = 'middle';
+
+        drawCtx.fillText(
+          'MR. K',
+          0,
+          -5
+        );
+
+        drawCtx.font =
+          '10px Space Mono,monospace';
+
+        drawCtx.fillStyle = '#f1f0ea';
+
+        drawCtx.fillText(
+          `${this.health} / 1000`,
+          0,
+          17
+        );
+
+        drawCtx.restore();
+
+        if (this.health < 750) {
+          this.drawCracks(drawCtx);
+        }
+      }
+    );
+  }
+
+  drawCracks(ctx) {
+    ctx.strokeStyle =
+      this.health < 250
+        ? '#ff875f'
+        : '#8f9690';
+
+    ctx.lineWidth =
+      this.health < 500
+        ? 1.5
+        : 1;
+
+    this.cracks
+      .slice(
+        0,
+        this.health < 250
+          ? 8
+          : this.health < 500
+            ? 5
+            : 3
+      )
+      .forEach((crack) => {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+
+        ctx.lineTo(
+          Math.cos(crack.angle) *
+            this.radius *
+            crack.length,
+          Math.sin(crack.angle) *
+            this.radius *
+            crack.length
+        );
+
+        ctx.stroke();
+      });
+  }
 }
