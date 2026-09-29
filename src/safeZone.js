@@ -5,17 +5,22 @@
 //   7 ship lengths vertical
 //
 // The exact same geometry is used for drawing AND collision detection.
+//
+// IMPORTANT:
+// The L barriers sit inside the arena and point INWARD.
+// This leaves an open protected pocket between each L and the outer
+// corner, with room for ships to fly around either end of the L.
 
 const SHIP_LENGTH = 34;
 const ARM_LENGTH = SHIP_LENGTH * 7; // 238 world units
 const WALL_THICKNESS = 8;
 
-// Distance from the arena's outer wall.
-// This creates the protected pocket behind each L.
-// Leave enough room between each arm end and the arena wall
-// for a ship to fly into and out of the protected pocket.
-const ENTRY_GAP = SHIP_LENGTH * 2;
-const WALL_OFFSET = ARM_LENGTH + ENTRY_GAP;
+// Distance from each outer arena wall to the elbow of its L.
+//
+// Two ship lengths gives enough clearance to fly around the OUTER
+// ends of the barrier and enter/leave the protected corner pocket.
+const ENTRY_GAP = SHIP_LENGTH * 2; // 68 world units
+const WALL_OFFSET = ENTRY_GAP;
 
 export class SafeZones {
   constructor(width, height) {
@@ -32,6 +37,13 @@ export class SafeZones {
 
   // Build the 8 solid wall segments:
   // 2 arms for each of the 4 corner Ls.
+  //
+  // The elbow sits ENTRY_GAP from the two nearby arena walls.
+  // Both arms then extend INTO the arena.
+  //
+  // This means the protected corner is NOT sealed.
+  // A ship can fly around either outer end of the L to enter/exit.
+
   rebuild() {
     const w = this.width;
     const h = this.height;
@@ -39,53 +51,82 @@ export class SafeZones {
     this.segments = [];
 
     // TOP LEFT
+    //
+    // Outer protected pocket:
+    // top-left corner.
+    //
+    // Arms point RIGHT and DOWN into arena.
     this.addL(
       WALL_OFFSET,
       WALL_OFFSET,
-      -1,
-      -1
+      1,
+      1
     );
 
     // TOP RIGHT
+    //
+    // Outer protected pocket:
+    // top-right corner.
+    //
+    // Arms point LEFT and DOWN into arena.
     this.addL(
       w - WALL_OFFSET,
       WALL_OFFSET,
-      1,
-      -1
-    );
-
-    // BOTTOM LEFT
-    this.addL(
-      WALL_OFFSET,
-      h - WALL_OFFSET,
       -1,
       1
     );
 
+    // BOTTOM LEFT
+    //
+    // Outer protected pocket:
+    // bottom-left corner.
+    //
+    // Arms point RIGHT and UP into arena.
+    this.addL(
+      WALL_OFFSET,
+      h - WALL_OFFSET,
+      1,
+      -1
+    );
+
     // BOTTOM RIGHT
+    //
+    // Outer protected pocket:
+    // bottom-right corner.
+    //
+    // Arms point LEFT and UP into arena.
     this.addL(
       w - WALL_OFFSET,
       h - WALL_OFFSET,
-      1,
-      1
+      -1,
+      -1
     );
   }
 
-  addL(cornerX, cornerY, horizontalDirection, verticalDirection) {
-    // Horizontal arm.
+  addL(
+    cornerX,
+    cornerY,
+    horizontalDirection,
+    verticalDirection
+  ) {
+    // Horizontal arm — exactly 7 ship lengths.
     this.segments.push({
       x1: cornerX,
       y1: cornerY,
-      x2: cornerX + horizontalDirection * ARM_LENGTH,
+      x2:
+        cornerX +
+        horizontalDirection * ARM_LENGTH,
       y2: cornerY
     });
 
-    // Vertical arm.
+    // Vertical arm — exactly 7 ship lengths.
     this.segments.push({
       x1: cornerX,
       y1: cornerY,
       x2: cornerX,
-      y2: cornerY + verticalDirection * ARM_LENGTH
+      y2:
+        cornerY +
+        verticalDirection * ARM_LENGTH
     });
   }
 
@@ -104,7 +145,8 @@ export class SafeZones {
     if (typeof objectOrX === 'object') {
       x = objectOrX.x;
       y = objectOrX.y;
-      radius = objectOrX.radius ?? radius;
+      radius =
+        objectOrX.radius ?? radius;
     } else {
       x = objectOrX;
     }
@@ -120,13 +162,14 @@ export class SafeZones {
       Math.max(0, radius) +
       WALL_THICKNESS / 2;
 
-    return this.segments.some((segment) =>
-      this.circleHitsSegment(
-        x,
-        y,
-        collisionRadius,
-        segment
-      )
+    return this.segments.some(
+      (segment) =>
+        this.circleHitsSegment(
+          x,
+          y,
+          collisionRadius,
+          segment
+        )
     );
   }
 
@@ -134,7 +177,8 @@ export class SafeZones {
     return this.hits(
       ship.x,
       ship.y,
-      ship.radius ?? SHIP_LENGTH * 0.35
+      ship.radius ??
+        SHIP_LENGTH * 0.35
     );
   }
 
@@ -163,14 +207,19 @@ export class SafeZones {
   }
 
   // Returns the nearest wall collision information.
-  // Useful for blocking a ship without destroying it.
-  getCollision(objectOrX, y, radius = 0) {
+  // Used for blocking a ship without destroying it.
+  getCollision(
+    objectOrX,
+    y,
+    radius = 0
+  ) {
     let x;
 
     if (typeof objectOrX === 'object') {
       x = objectOrX.x;
       y = objectOrX.y;
-      radius = objectOrX.radius ?? radius;
+      radius =
+        objectOrX.radius ?? radius;
     } else {
       x = objectOrX;
     }
@@ -188,24 +237,31 @@ export class SafeZones {
 
     let closestCollision = null;
 
-    for (const segment of this.segments) {
-      const closest = this.closestPointOnSegment(
-        x,
-        y,
-        segment
-      );
+    for (
+      const segment of this.segments
+    ) {
+      const closest =
+        this.closestPointOnSegment(
+          x,
+          y,
+          segment
+        );
 
       const dx = x - closest.x;
       const dy = y - closest.y;
-      const distance = Math.hypot(dx, dy);
+      const distance =
+        Math.hypot(dx, dy);
 
-      if (distance >= collisionRadius) {
+      if (
+        distance >= collisionRadius
+      ) {
         continue;
       }
 
       if (
         !closestCollision ||
-        distance < closestCollision.distance
+        distance <
+          closestCollision.distance
       ) {
         let normalX;
         let normalY;
@@ -214,14 +270,27 @@ export class SafeZones {
           normalX = dx / distance;
           normalY = dy / distance;
         } else {
-          // Fallback normal if object centre lies exactly on wall.
-          const segmentDX = segment.x2 - segment.x1;
-          const segmentDY = segment.y2 - segment.y1;
-          const segmentLength =
-            Math.hypot(segmentDX, segmentDY) || 1;
+          // Fallback normal if object centre
+          // lies exactly on the wall.
+          const segmentDX =
+            segment.x2 - segment.x1;
 
-          normalX = -segmentDY / segmentLength;
-          normalY = segmentDX / segmentLength;
+          const segmentDY =
+            segment.y2 - segment.y1;
+
+          const segmentLength =
+            Math.hypot(
+              segmentDX,
+              segmentDY
+            ) || 1;
+
+          normalX =
+            -segmentDY /
+            segmentLength;
+
+          normalY =
+            segmentDX /
+            segmentLength;
         }
 
         closestCollision = {
@@ -232,7 +301,8 @@ export class SafeZones {
           normalY,
           distance,
           penetration:
-            collisionRadius - distance
+            collisionRadius -
+            distance
         };
       }
     }
@@ -242,11 +312,11 @@ export class SafeZones {
 
   // Push a ship back outside the barrier.
   //
-  // IMPORTANT:
-  // touching the L does NOT destroy the ship.
+  // Touching the L does NOT destroy the ship.
   blockShip(ship) {
     const radius =
-      ship.radius ?? SHIP_LENGTH * 0.35;
+      ship.radius ??
+      SHIP_LENGTH * 0.35;
 
     const collision =
       this.getCollision(
@@ -259,27 +329,37 @@ export class SafeZones {
       return false;
     }
 
-    // Move the ship just outside the solid wall.
+    // Move the ship just outside
+    // the solid wall.
     const pushDistance =
       collision.penetration + 0.5;
 
     ship.x +=
-      collision.normalX * pushDistance;
+      collision.normalX *
+      pushDistance;
 
     ship.y +=
-      collision.normalY * pushDistance;
+      collision.normalY *
+      pushDistance;
 
-    // Remove only the velocity travelling INTO the wall.
+    // Remove only velocity travelling
+    // INTO the wall.
     //
-    // This lets the ship slide along the L rather than
-    // stopping dead.
+    // This lets the ship slide along
+    // the L instead of stopping dead.
     if (
-      Number.isFinite(ship.velocityX) &&
-      Number.isFinite(ship.velocityY)
+      Number.isFinite(
+        ship.velocityX
+      ) &&
+      Number.isFinite(
+        ship.velocityY
+      )
     ) {
       const velocityIntoWall =
-        ship.velocityX * collision.normalX +
-        ship.velocityY * collision.normalY;
+        ship.velocityX *
+          collision.normalX +
+        ship.velocityY *
+          collision.normalY;
 
       if (velocityIntoWall < 0) {
         ship.velocityX -=
@@ -295,7 +375,12 @@ export class SafeZones {
     return true;
   }
 
-  circleHitsSegment(x, y, radius, segment) {
+  circleHitsSegment(
+    x,
+    y,
+    radius,
+    segment
+  ) {
     const closest =
       this.closestPointOnSegment(
         x,
@@ -312,12 +397,18 @@ export class SafeZones {
     );
   }
 
-  closestPointOnSegment(x, y, segment) {
+  closestPointOnSegment(
+    x,
+    y,
+    segment
+  ) {
     const dx =
-      segment.x2 - segment.x1;
+      segment.x2 -
+      segment.x1;
 
     const dy =
-      segment.y2 - segment.y1;
+      segment.y2 -
+      segment.y1;
 
     const lengthSquared =
       dx * dx + dy * dy;
@@ -341,8 +432,12 @@ export class SafeZones {
     );
 
     return {
-      x: segment.x1 + t * dx,
-      y: segment.y1 + t * dy
+      x:
+        segment.x1 +
+        t * dx,
+      y:
+        segment.y1 +
+        t * dy
     };
   }
 
@@ -350,11 +445,15 @@ export class SafeZones {
     ctx.save();
 
     ctx.strokeStyle = '#72e6dd';
-    ctx.lineWidth = WALL_THICKNESS;
+    ctx.lineWidth =
+      WALL_THICKNESS;
+
     ctx.lineCap = 'square';
     ctx.lineJoin = 'miter';
 
-    for (const segment of this.segments) {
+    for (
+      const segment of this.segments
+    ) {
       ctx.beginPath();
 
       ctx.moveTo(
@@ -374,6 +473,11 @@ export class SafeZones {
   }
 }
 
-export const SAFE_ZONE_SHIP_LENGTH = SHIP_LENGTH;
-export const SAFE_ZONE_ARM_LENGTH = ARM_LENGTH;
-export const SAFE_ZONE_WALL_THICKNESS = WALL_THICKNESS;
+export const SAFE_ZONE_SHIP_LENGTH =
+  SHIP_LENGTH;
+
+export const SAFE_ZONE_ARM_LENGTH =
+  ARM_LENGTH;
+
+export const SAFE_ZONE_WALL_THICKNESS =
+  WALL_THICKNESS;
