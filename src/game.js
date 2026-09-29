@@ -2,52 +2,1065 @@ import { Asteroid } from './asteroid.js';
 import { Camera } from './camera.js';
 import { HomingMissile } from './homingMissile.js';
 import { MrKRock } from './mrKRock.js';
+import { SafeZones } from './safeZone.js';
 import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
-import { drawWrapped, normalizeDelta, random, wrappedDistance } from './physics.js';
+import {
+  drawWrapped,
+  normalizeDelta,
+  random,
+  wrappedDistance
+} from './physics.js';
 
 const canvas = document.querySelector('#gameCanvas');
 const ctx = canvas.getContext('2d');
 const keys = new Set();
-const scoreNodes = { A: document.querySelector('#scoreA') };
+
+const scoreNodes = {
+  A: document.querySelector('#scoreA')
+};
+
 const startHint = document.querySelector('#startHint');
 const gameShell = document.querySelector('.game-shell');
-const spelling = new SpellingChallengeController({ overlay: document.querySelector('#wormholeOverlay'), onComplete: respawnPlayer });
-let width = 0; let height = 0; let worldWidth = 0; let worldHeight = 0; let lastTime = performance.now(); let hasStarted = false;
-const camera = new Camera();
-const world = { ships: [], bullets: [], asteroids: [], missiles: [], particles: [], mrK: null, mrKRespawnTimer: 0, scores: { A: 0, B: 0 } };
-const controls = { A: { left: 'ArrowLeft', right: 'ArrowRight', thrust: 'ArrowUp', brake: 'ArrowDown', fire: 'Space' } };
 
-function resize() { const frame = canvas.parentElement; const ratio = Math.min(window.devicePixelRatio || 1, 2); width = frame.clientWidth; height = frame.clientHeight; canvas.width = Math.floor(width * ratio); canvas.height = Math.floor(height * ratio); ctx.setTransform(ratio, 0, 0, ratio, 0, 0); worldWidth = width * 2.4; worldHeight = height * 2.4; }
-function spawnAsteroids() { world.asteroids = []; for (let index = 0; index < 7; index += 1) { let x; let y; do { x = random(40, worldWidth - 40); y = random(40, worldHeight - 40); } while (Math.hypot(x - worldWidth / 2, y - worldHeight / 2) < 180); world.asteroids.push(new Asteroid(x, y, 'large')); } }
-function spawnMrK() { world.mrK = new MrKRock(worldWidth * .5, worldHeight * .5); }
-function addExplosion(x, y, color, count = 10, spread = 4) { for (let index = 0; index < count; index += 1) { const angle = random(0, Math.PI * 2); world.particles.push({ x, y, velocityX: Math.cos(angle) * random(1, spread), velocityY: Math.sin(angle) * random(1, spread), life: random(.25, .65), color, length: random(3, 10) }); } }
-function addRockExplosion(x, y) { addExplosion(x, y, '#ff875f', 70, 7); addExplosion(x, y, '#f1f0ea', 45, 11); for (let index = 0; index < 8; index += 1) addExplosion(x + random(-50, 50), y + random(-50, 50), '#ffdb69', 5, 4); }
-function findClosestShip(missile) { return world.ships.filter((ship) => ship.visible).sort((a, b) => wrappedDistance(missile, a, worldWidth, worldHeight) - wrappedDistance(missile, b, worldWidth, worldHeight))[0] || null; }
-function reset() { world.ships = [new Ship('A', worldWidth * .5, worldHeight * .5, controls.A)]; world.bullets = []; world.missiles = []; world.particles = []; world.mrKRespawnTimer = 0; world.scores = { A: 0 }; spawnAsteroids(); spawnMrK(); camera.x = worldWidth * .5; camera.y = worldHeight * .5; camera.update(world.ships, width, height, worldWidth, worldHeight); updateScores(); }
-function updateScores() { scoreNodes.A.textContent = String(world.scores.A).padStart(5, '0'); }
-function suspendPlayerControls(playerId) { Object.values(controls[playerId]).forEach((control) => keys.delete(control)); }
-function playerDestroyed(playerId, reason) { const ship = world.ships.find((candidate) => candidate.owner === playerId); if (!ship || !ship.destroy()) return false; suspendPlayerControls(playerId); spelling.begin({ playerId, reason }); return true; }
-function respawnPlayer(playerId) { const ship = world.ships.find((candidate) => candidate.owner === playerId); if (ship) ship.respawn(); }
-function releaseMissiles() { for (let index = 0; index < 20; index += 1) { const angle = index / 20 * Math.PI * 2; const missile = new HomingMissile(world.mrK.x + Math.cos(angle) * world.mrK.radius, world.mrK.y + Math.sin(angle) * world.mrK.radius, angle, world.mrK.radius); world.missiles.push(missile); } }
-function update(dt) {
-  world.ships.forEach((ship) => { const bullet = ship.update(dt, keys, worldWidth, worldHeight); if (bullet) world.bullets.push(bullet); });
-  world.bullets.forEach((bullet) => bullet.update(dt, worldWidth, worldHeight)); world.bullets = world.bullets.filter((bullet) => bullet.life > 0);
-  world.asteroids.forEach((asteroid) => asteroid.update(dt, worldWidth, worldHeight)); if (world.mrK) world.mrK.update(dt, worldWidth, worldHeight);
-  world.missiles.forEach((missile) => missile.update(dt, world.ships, worldWidth, worldHeight)); world.missiles = world.missiles.filter((missile) => { if (missile.life <= 0) addExplosion(missile.x, missile.y, '#ffdb69', 3, 2); return missile.life > 0; });
-  world.particles.forEach((particle) => { const frameScale = dt * 60; particle.x += particle.velocityX * frameScale; particle.y += particle.velocityY * frameScale; particle.life -= dt; }); world.particles = world.particles.filter((particle) => particle.life > 0);
-  for (let bulletIndex = world.bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) { const bullet = world.bullets[bulletIndex]; const missileIndex = world.missiles.findIndex((missile) => wrappedDistance(bullet, missile, worldWidth, worldHeight) < missile.radius + bullet.radius); if (missileIndex >= 0) { world.bullets.splice(bulletIndex, 1); const missile = world.missiles.splice(missileIndex, 1)[0]; addExplosion(missile.x, missile.y, '#ffdb69', 7, 3); continue; } const asteroidIndex = world.asteroids.findIndex((asteroid) => wrappedDistance(bullet, asteroid, worldWidth, worldHeight) < asteroid.radius + bullet.radius); if (asteroidIndex < 0) continue; const asteroid = world.asteroids[asteroidIndex]; world.bullets.splice(bulletIndex, 1); world.asteroids.splice(asteroidIndex, 1); world.scores[bullet.owner] += asteroid.points; updateScores(); addExplosion(asteroid.x, asteroid.y, bullet.owner === 'A' ? '#ff875f' : '#72e6dd', asteroid.size === 'small' ? 14 : 9); world.asteroids.push(...asteroid.split()); }
-  if (world.mrK) for (let bulletIndex = world.bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) { const bullet = world.bullets[bulletIndex]; if (wrappedDistance(bullet, world.mrK, worldWidth, worldHeight) >= world.mrK.radius + bullet.radius) continue; world.bullets.splice(bulletIndex, 1); world.mrK.damage(1); world.scores[bullet.owner] += 1; updateScores(); addExplosion(bullet.x, bullet.y, bullet.owner === 'A' ? '#ff875f' : '#72e6dd', 2, 2); if (world.mrK.health === 0) { addRockExplosion(world.mrK.x, world.mrK.y); releaseMissiles(); world.mrK = null; world.mrKRespawnTimer = 60; } }
-  for (let bulletIndex = world.bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) { const bullet = world.bullets[bulletIndex]; const target = world.ships.find((ship) => ship.owner !== bullet.owner && ship.visible && wrappedDistance(bullet, ship, worldWidth, worldHeight) < ship.radius + bullet.radius); if (!target) continue; world.bullets.splice(bulletIndex, 1); if (playerDestroyed(target.owner, 'enemy-bullet')) addExplosion(target.x, target.y, target.owner === 'A' ? '#ff875f' : '#72e6dd', 22); }
-  for (let missileIndex = world.missiles.length - 1; missileIndex >= 0; missileIndex -= 1) { const missile = world.missiles[missileIndex]; const rockHit = !missile.outbound && (world.asteroids.some((asteroid) => wrappedDistance(missile, asteroid, worldWidth, worldHeight) < asteroid.radius + missile.radius) || (world.mrK && wrappedDistance(missile, world.mrK, worldWidth, worldHeight) < world.mrK.radius + missile.radius)); if (rockHit) { world.missiles.splice(missileIndex, 1); addExplosion(missile.x, missile.y, '#ffdb69', 7, 3); continue; } const target = world.ships.find((ship) => ship.visible && wrappedDistance(missile, ship, worldWidth, worldHeight) < ship.radius + missile.radius); if (!target) continue; world.missiles.splice(missileIndex, 1); if (playerDestroyed(target.owner, 'mr-k-missile')) addExplosion(target.x, target.y, target.owner === 'A' ? '#ff875f' : '#72e6dd', 22); }
-  world.ships.forEach((ship) => { if (!ship.visible) return; const asteroidIndex = world.asteroids.findIndex((asteroid) => wrappedDistance(ship, asteroid, worldWidth, worldHeight) < asteroid.radius + 11); if (asteroidIndex < 0 || !playerDestroyed(ship.owner, 'asteroid')) return; const asteroid = world.asteroids.splice(asteroidIndex, 1)[0]; addExplosion(ship.x, ship.y, ship.owner === 'A' ? '#ff875f' : '#72e6dd', 22); addExplosion(asteroid.x, asteroid.y, '#f1f0ea', 14); });
-  if (!world.asteroids.length) spawnAsteroids(); if (!world.mrK) { world.mrKRespawnTimer -= dt; if (world.mrKRespawnTimer <= 0) spawnMrK(); } camera.update(world.ships, width, height, worldWidth, worldHeight);
+const spelling = new SpellingChallengeController({
+  overlay: document.querySelector('#wormholeOverlay'),
+  onComplete: respawnPlayer
+});
+
+let width = 0;
+let height = 0;
+let worldWidth = 0;
+let worldHeight = 0;
+let lastTime = performance.now();
+let hasStarted = false;
+
+const camera = new Camera();
+
+/*
+ * SafeZones is created after the first resize() because its geometry
+ * uses the actual Moshroids world dimensions.
+ */
+let safeZones = null;
+
+const world = {
+  ships: [],
+  bullets: [],
+  asteroids: [],
+  missiles: [],
+  particles: [],
+  mrK: null,
+  mrKRespawnTimer: 0,
+  scores: {
+    A: 0,
+    B: 0
+  }
+};
+
+const controls = {
+  A: {
+    left: 'ArrowLeft',
+    right: 'ArrowRight',
+    thrust: 'ArrowUp',
+    brake: 'ArrowDown',
+    fire: 'Space'
+  }
+};
+
+function resize() {
+  const frame = canvas.parentElement;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+
+  width = frame.clientWidth;
+  height = frame.clientHeight;
+
+  canvas.width = Math.floor(width * ratio);
+  canvas.height = Math.floor(height * ratio);
+
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+  worldWidth = width * 2.4;
+  worldHeight = height * 2.4;
+
+  if (!safeZones) {
+    safeZones = new SafeZones(worldWidth, worldHeight);
+  } else {
+    safeZones.resize(worldWidth, worldHeight);
+  }
 }
-function drawGrid() { ctx.save(); ctx.globalAlpha = .16; ctx.strokeStyle = '#28302f'; ctx.lineWidth = 1; for (let x = 0; x < worldWidth; x += 48) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, worldHeight); ctx.stroke(); } for (let y = 0; y < worldHeight; y += 48) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(worldWidth, y); ctx.stroke(); } ctx.restore(); }
-function drawWorld() { drawGrid(); world.asteroids.forEach((asteroid) => asteroid.draw(ctx, worldWidth, worldHeight)); if (world.mrK) world.mrK.draw(ctx, worldWidth, worldHeight); world.bullets.forEach((bullet) => drawWrapped(ctx, bullet, worldWidth, worldHeight, (drawCtx) => bullet.draw(drawCtx))); world.missiles.forEach((missile) => missile.draw(ctx, worldWidth, worldHeight)); world.ships.forEach((ship) => ship.draw(ctx, worldWidth, worldHeight)); world.particles.forEach((particle) => { ctx.save(); ctx.globalAlpha = Math.max(0, particle.life * 2); ctx.strokeStyle = particle.color; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(particle.x, particle.y); ctx.lineTo(particle.x - particle.velocityX * particle.length, particle.y - particle.velocityY * particle.length); ctx.stroke(); ctx.restore(); }); }
-function draw() { ctx.clearRect(0, 0, width, height); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, width, height); ctx.save(); ctx.translate(width / 2, height / 2); ctx.scale(camera.zoom, camera.zoom); ctx.translate(-camera.x, -camera.y); drawWorld(); ctx.restore(); }
-function frame(now) { const dt = normalizeDelta(now - lastTime); lastTime = now; if (hasStarted) update(dt); spelling.update(now); draw(); requestAnimationFrame(frame); }
-function keyName(event) { if (event.code === 'ArrowLeft' || event.code === 'ArrowRight' || event.code === 'ArrowUp' || event.code === 'ArrowDown' || event.code === 'Space') return event.code; return event.key.toLowerCase(); }
-gameShell.style.setProperty('--ui-scale', '1');
-gameShell.addEventListener('input', (event) => { if (event.target.id !== 'zoomControl') return; gameShell.style.setProperty('--ui-scale', event.target.value); event.target.closest('.zoom-control').querySelector('output').textContent = `${Math.round(Number(event.target.value) * 100)}%`; });
-document.addEventListener('keydown', (event) => { if (event.target.closest('.wormhole-overlay')) return; const key = keyName(event); if (Object.values(controls).some((set) => Object.values(set).includes(key))) event.preventDefault(); keys.add(key); hasStarted = true; startHint.classList.add('hidden'); canvas.focus(); }, true); document.addEventListener('keyup', (event) => { if (event.target.closest('.wormhole-overlay')) return; keys.delete(keyName(event)); }, true); window.addEventListener('blur', () => keys.clear()); window.addEventListener('resize', () => { resize(); reset(); }); resize(); reset(); requestAnimationFrame(frame);
+
+function spawnAsteroids() {
+  world.asteroids = [];
+
+  for (let index = 0; index < 7; index += 1) {
+    let x;
+    let y;
+
+    do {
+      x = random(40, worldWidth - 40);
+      y = random(40, worldHeight - 40);
+    } while (
+      Math.hypot(
+        x - worldWidth / 2,
+        y - worldHeight / 2
+      ) < 180
+    );
+
+    world.asteroids.push(
+      new Asteroid(x, y, 'large')
+    );
+  }
+}
+
+function spawnMrK() {
+  world.mrK = new MrKRock(
+    worldWidth * 0.5,
+    worldHeight * 0.5
+  );
+}
+
+function addExplosion(
+  x,
+  y,
+  color,
+  count = 10,
+  spread = 4
+) {
+  for (let index = 0; index < count; index += 1) {
+    const angle = random(0, Math.PI * 2);
+
+    world.particles.push({
+      x,
+      y,
+      velocityX: Math.cos(angle) * random(1, spread),
+      velocityY: Math.sin(angle) * random(1, spread),
+      life: random(0.25, 0.65),
+      color,
+      length: random(3, 10)
+    });
+  }
+}
+
+function addRockExplosion(x, y) {
+  addExplosion(x, y, '#ff875f', 70, 7);
+  addExplosion(x, y, '#f1f0ea', 45, 11);
+
+  for (let index = 0; index < 8; index += 1) {
+    addExplosion(
+      x + random(-50, 50),
+      y + random(-50, 50),
+      '#ffdb69',
+      5,
+      4
+    );
+  }
+}
+
+function findClosestShip(missile) {
+  return (
+    world.ships
+      .filter((ship) => ship.visible)
+      .sort(
+        (a, b) =>
+          wrappedDistance(
+            missile,
+            a,
+            worldWidth,
+            worldHeight
+          ) -
+          wrappedDistance(
+            missile,
+            b,
+            worldWidth,
+            worldHeight
+          )
+      )[0] || null
+  );
+}
+
+function reset() {
+  world.ships = [
+    new Ship(
+      'A',
+      worldWidth * 0.5,
+      worldHeight * 0.5,
+      controls.A
+    )
+  ];
+
+  world.bullets = [];
+  world.missiles = [];
+  world.particles = [];
+  world.mrKRespawnTimer = 0;
+
+  world.scores = {
+    A: 0
+  };
+
+  spawnAsteroids();
+  spawnMrK();
+
+  camera.x = worldWidth * 0.5;
+  camera.y = worldHeight * 0.5;
+
+  camera.update(
+    world.ships,
+    width,
+    height,
+    worldWidth,
+    worldHeight
+  );
+
+  updateScores();
+}
+
+function updateScores() {
+  scoreNodes.A.textContent =
+    String(world.scores.A).padStart(5, '0');
+}
+
+function suspendPlayerControls(playerId) {
+  Object.values(controls[playerId]).forEach(
+    (control) => keys.delete(control)
+  );
+}
+
+function playerDestroyed(playerId, reason) {
+  const ship = world.ships.find(
+    (candidate) => candidate.owner === playerId
+  );
+
+  if (!ship || !ship.destroy()) {
+    return false;
+  }
+
+  suspendPlayerControls(playerId);
+
+  spelling.begin({
+    playerId,
+    reason
+  });
+
+  return true;
+}
+
+function respawnPlayer(playerId) {
+  const ship = world.ships.find(
+    (candidate) => candidate.owner === playerId
+  );
+
+  if (ship) {
+    ship.respawn();
+  }
+}
+
+function releaseMissiles() {
+  for (let index = 0; index < 20; index += 1) {
+    const angle =
+      (index / 20) * Math.PI * 2;
+
+    const missile = new HomingMissile(
+      world.mrK.x +
+        Math.cos(angle) * world.mrK.radius,
+      world.mrK.y +
+        Math.sin(angle) * world.mrK.radius,
+      angle,
+      world.mrK.radius
+    );
+
+    world.missiles.push(missile);
+  }
+}
+
+function update(dt) {
+  /*
+   * SHIPS
+   */
+  world.ships.forEach((ship) => {
+    const bullet = ship.update(
+      dt,
+      keys,
+      worldWidth,
+      worldHeight
+    );
+
+    if (bullet) {
+      world.bullets.push(bullet);
+    }
+  });
+
+  /*
+   * BULLETS
+   */
+  world.bullets.forEach((bullet) =>
+    bullet.update(
+      dt,
+      worldWidth,
+      worldHeight
+    )
+  );
+
+  world.bullets = world.bullets.filter(
+    (bullet) => bullet.life > 0
+  );
+
+  /*
+   * ASTEROIDS
+   */
+  world.asteroids.forEach((asteroid) =>
+    asteroid.update(
+      dt,
+      worldWidth,
+      worldHeight
+    )
+  );
+
+  /*
+   * MR. K ROCK
+   */
+  if (world.mrK) {
+    world.mrK.update(
+      dt,
+      worldWidth,
+      worldHeight
+    );
+  }
+
+  /*
+   * MISSILES
+   */
+  world.missiles.forEach((missile) =>
+    missile.update(
+      dt,
+      world.ships,
+      worldWidth,
+      worldHeight
+    )
+  );
+
+  world.missiles = world.missiles.filter(
+    (missile) => {
+      if (missile.life <= 0) {
+        addExplosion(
+          missile.x,
+          missile.y,
+          '#ffdb69',
+          3,
+          2
+        );
+      }
+
+      return missile.life > 0;
+    }
+  );
+
+  /*
+   * PARTICLES
+   */
+  world.particles.forEach((particle) => {
+    const frameScale = dt * 60;
+
+    particle.x +=
+      particle.velocityX * frameScale;
+
+    particle.y +=
+      particle.velocityY * frameScale;
+
+    particle.life -= dt;
+  });
+
+  world.particles =
+    world.particles.filter(
+      (particle) => particle.life > 0
+    );
+
+  /*
+   * BULLET → MISSILE
+   * BULLET → ASTEROID
+   */
+  for (
+    let bulletIndex =
+      world.bullets.length - 1;
+    bulletIndex >= 0;
+    bulletIndex -= 1
+  ) {
+    const bullet =
+      world.bullets[bulletIndex];
+
+    const missileIndex =
+      world.missiles.findIndex(
+        (missile) =>
+          wrappedDistance(
+            bullet,
+            missile,
+            worldWidth,
+            worldHeight
+          ) <
+          missile.radius + bullet.radius
+      );
+
+    if (missileIndex >= 0) {
+      world.bullets.splice(
+        bulletIndex,
+        1
+      );
+
+      const missile =
+        world.missiles.splice(
+          missileIndex,
+          1
+        )[0];
+
+      addExplosion(
+        missile.x,
+        missile.y,
+        '#ffdb69',
+        7,
+        3
+      );
+
+      continue;
+    }
+
+    const asteroidIndex =
+      world.asteroids.findIndex(
+        (asteroid) =>
+          wrappedDistance(
+            bullet,
+            asteroid,
+            worldWidth,
+            worldHeight
+          ) <
+          asteroid.radius + bullet.radius
+      );
+
+    if (asteroidIndex < 0) {
+      continue;
+    }
+
+    const asteroid =
+      world.asteroids[asteroidIndex];
+
+    world.bullets.splice(
+      bulletIndex,
+      1
+    );
+
+    world.asteroids.splice(
+      asteroidIndex,
+      1
+    );
+
+    world.scores[bullet.owner] +=
+      asteroid.points;
+
+    updateScores();
+
+    addExplosion(
+      asteroid.x,
+      asteroid.y,
+      bullet.owner === 'A'
+        ? '#ff875f'
+        : '#72e6dd',
+      asteroid.size === 'small'
+        ? 14
+        : 9
+    );
+
+    world.asteroids.push(
+      ...asteroid.split()
+    );
+  }
+
+  /*
+   * BULLET → MR. K ROCK
+   */
+  if (world.mrK) {
+    for (
+      let bulletIndex =
+        world.bullets.length - 1;
+      bulletIndex >= 0;
+      bulletIndex -= 1
+    ) {
+      const bullet =
+        world.bullets[bulletIndex];
+
+      if (
+        wrappedDistance(
+          bullet,
+          world.mrK,
+          worldWidth,
+          worldHeight
+        ) >=
+        world.mrK.radius +
+          bullet.radius
+      ) {
+        continue;
+      }
+
+      world.bullets.splice(
+        bulletIndex,
+        1
+      );
+
+      world.mrK.damage(1);
+
+      world.scores[bullet.owner] += 1;
+
+      updateScores();
+
+      addExplosion(
+        bullet.x,
+        bullet.y,
+        bullet.owner === 'A'
+          ? '#ff875f'
+          : '#72e6dd',
+        2,
+        2
+      );
+
+      if (world.mrK.health === 0) {
+        addRockExplosion(
+          world.mrK.x,
+          world.mrK.y
+        );
+
+        releaseMissiles();
+
+        world.mrK = null;
+        world.mrKRespawnTimer = 60;
+      }
+    }
+  }
+
+  /*
+   * BULLET → OTHER PLAYER
+   */
+  for (
+    let bulletIndex =
+      world.bullets.length - 1;
+    bulletIndex >= 0;
+    bulletIndex -= 1
+  ) {
+    const bullet =
+      world.bullets[bulletIndex];
+
+    const target =
+      world.ships.find(
+        (ship) =>
+          ship.owner !== bullet.owner &&
+          ship.visible &&
+          wrappedDistance(
+            bullet,
+            ship,
+            worldWidth,
+            worldHeight
+          ) <
+          ship.radius + bullet.radius
+      );
+
+    if (!target) {
+      continue;
+    }
+
+    world.bullets.splice(
+      bulletIndex,
+      1
+    );
+
+    if (
+      playerDestroyed(
+        target.owner,
+        'enemy-bullet'
+      )
+    ) {
+      addExplosion(
+        target.x,
+        target.y,
+        target.owner === 'A'
+          ? '#ff875f'
+          : '#72e6dd',
+        22
+      );
+    }
+  }
+
+  /*
+   * MISSILE COLLISIONS
+   */
+  for (
+    let missileIndex =
+      world.missiles.length - 1;
+    missileIndex >= 0;
+    missileIndex -= 1
+  ) {
+    const missile =
+      world.missiles[missileIndex];
+
+    const rockHit =
+      !missile.outbound &&
+      (
+        world.asteroids.some(
+          (asteroid) =>
+            wrappedDistance(
+              missile,
+              asteroid,
+              worldWidth,
+              worldHeight
+            ) <
+            asteroid.radius +
+              missile.radius
+        ) ||
+        (
+          world.mrK &&
+          wrappedDistance(
+            missile,
+            world.mrK,
+            worldWidth,
+            worldHeight
+          ) <
+          world.mrK.radius +
+            missile.radius
+        )
+      );
+
+    if (rockHit) {
+      world.missiles.splice(
+        missileIndex,
+        1
+      );
+
+      addExplosion(
+        missile.x,
+        missile.y,
+        '#ffdb69',
+        7,
+        3
+      );
+
+      continue;
+    }
+
+    const target =
+      world.ships.find(
+        (ship) =>
+          ship.visible &&
+          wrappedDistance(
+            missile,
+            ship,
+            worldWidth,
+            worldHeight
+          ) <
+          ship.radius +
+            missile.radius
+      );
+
+    if (!target) {
+      continue;
+    }
+
+    world.missiles.splice(
+      missileIndex,
+      1
+    );
+
+    if (
+      playerDestroyed(
+        target.owner,
+        'mr-k-missile'
+      )
+    ) {
+      addExplosion(
+        target.x,
+        target.y,
+        target.owner === 'A'
+          ? '#ff875f'
+          : '#72e6dd',
+        22
+      );
+    }
+  }
+
+  /*
+   * SHIP → ASTEROID
+   */
+  world.ships.forEach((ship) => {
+    if (!ship.visible) {
+      return;
+    }
+
+    const asteroidIndex =
+      world.asteroids.findIndex(
+        (asteroid) =>
+          wrappedDistance(
+            ship,
+            asteroid,
+            worldWidth,
+            worldHeight
+          ) <
+          asteroid.radius + 11
+      );
+
+    if (
+      asteroidIndex < 0 ||
+      !playerDestroyed(
+        ship.owner,
+        'asteroid'
+      )
+    ) {
+      return;
+    }
+
+    const asteroid =
+      world.asteroids.splice(
+        asteroidIndex,
+        1
+      )[0];
+
+    addExplosion(
+      ship.x,
+      ship.y,
+      ship.owner === 'A'
+        ? '#ff875f'
+        : '#72e6dd',
+      22
+    );
+
+    addExplosion(
+      asteroid.x,
+      asteroid.y,
+      '#f1f0ea',
+      14
+    );
+  });
+
+  /*
+   * RESPAWNS
+   */
+  if (!world.asteroids.length) {
+    spawnAsteroids();
+  }
+
+  if (!world.mrK) {
+    world.mrKRespawnTimer -= dt;
+
+    if (
+      world.mrKRespawnTimer <= 0
+    ) {
+      spawnMrK();
+    }
+  }
+
+  camera.update(
+    world.ships,
+    width,
+    height,
+    worldWidth,
+    worldHeight
+  );
+}
+
+function drawGrid() {
+  ctx.save();
+
+  ctx.globalAlpha = 0.16;
+  ctx.strokeStyle = '#28302f';
+  ctx.lineWidth = 1;
+
+  for (
+    let x = 0;
+    x < worldWidth;
+    x += 48
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, worldHeight);
+    ctx.stroke();
+  }
+
+  for (
+    let y = 0;
+    y < worldHeight;
+    y += 48
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(worldWidth, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawWorld() {
+  drawGrid();
+
+  /*
+   * FOUR CORNER SAFE-ZONE L BARRIERS
+   *
+   * Each arm is exactly seven ship lengths.
+   * This is visual only in this pass.
+   */
+  if (safeZones) {
+    safeZones.draw(ctx);
+  }
+
+  world.asteroids.forEach(
+    (asteroid) =>
+      asteroid.draw(
+        ctx,
+        worldWidth,
+        worldHeight
+      )
+  );
+
+  if (world.mrK) {
+    world.mrK.draw(
+      ctx,
+      worldWidth,
+      worldHeight
+    );
+  }
+
+  world.bullets.forEach(
+    (bullet) =>
+      drawWrapped(
+        ctx,
+        bullet,
+        worldWidth,
+        worldHeight,
+        (drawCtx) =>
+          bullet.draw(drawCtx)
+      )
+  );
+
+  world.missiles.forEach(
+    (missile) =>
+      missile.draw(
+        ctx,
+        worldWidth,
+        worldHeight
+      )
+  );
+
+  world.ships.forEach(
+    (ship) =>
+      ship.draw(
+        ctx,
+        worldWidth,
+        worldHeight
+      )
+  );
+
+  world.particles.forEach(
+    (particle) => {
+      ctx.save();
+
+      ctx.globalAlpha =
+        Math.max(
+          0,
+          particle.life * 2
+        );
+
+      ctx.strokeStyle =
+        particle.color;
+
+      ctx.lineWidth = 1;
+
+      ctx.beginPath();
+
+      ctx.moveTo(
+        particle.x,
+        particle.y
+      );
+
+      ctx.lineTo(
+        particle.x -
+          particle.velocityX *
+            particle.length,
+        particle.y -
+          particle.velocityY *
+            particle.length
+      );
+
+      ctx.stroke();
+      ctx.restore();
+    }
+  );
+}
+
+function draw() {
+  ctx.clearRect(
+    0,
+    0,
+    width,
+    height
+  );
+
+  ctx.fillStyle = '#000';
+
+  ctx.fillRect(
+    0,
+    0,
+    width,
+    height
+  );
+
+  ctx.save();
+
+  ctx.translate(
+    width / 2,
+    height / 2
+  );
+
+  ctx.scale(
+    camera.zoom,
+    camera.zoom
+  );
+
+  ctx.translate(
+    -camera.x,
+    -camera.y
+  );
+
+  drawWorld();
+
+  ctx.restore();
+}
+
+function frame(now) {
+  const dt =
+    normalizeDelta(
+      now - lastTime
+    );
+
+  lastTime = now;
+
+  if (hasStarted) {
+    update(dt);
+  }
+
+  spelling.update(now);
+
+  draw();
+
+  requestAnimationFrame(frame);
+}
+
+function keyName(event) {
+  if (
+    event.code === 'ArrowLeft' ||
+    event.code === 'ArrowRight' ||
+    event.code === 'ArrowUp' ||
+    event.code === 'ArrowDown' ||
+    event.code === 'Space'
+  ) {
+    return event.code;
+  }
+
+  return event.key.toLowerCase();
+}
+
+gameShell.style.setProperty(
+  '--ui-scale',
+  '1'
+);
+
+gameShell.addEventListener(
+  'input',
+  (event) => {
+    if (
+      event.target.id !==
+      'zoomControl'
+    ) {
+      return;
+    }
+
+    gameShell.style.setProperty(
+      '--ui-scale',
+      event.target.value
+    );
+
+    event.target
+      .closest('.zoom-control')
+      .querySelector('output')
+      .textContent =
+        `${Math.round(
+          Number(event.target.value) *
+            100
+        )}%`;
+  }
+);
+
+document.addEventListener(
+  'keydown',
+  (event) => {
+    if (
+      event.target.closest(
+        '.wormhole-overlay'
+      )
+    ) {
+      return;
+    }
+
+    const key =
+      keyName(event);
+
+    if (
+      Object.values(controls).some(
+        (set) =>
+          Object.values(set).includes(
+            key
+          )
+      )
+    ) {
+      event.preventDefault();
+    }
+
+    keys.add(key);
+
+    hasStarted = true;
+
+    startHint.classList.add(
+      'hidden'
+    );
+
+    canvas.focus();
+  },
+  true
+);
+
+document.addEventListener(
+  'keyup',
+  (event) => {
+    if (
+      event.target.closest(
+        '.wormhole-overlay'
+      )
+    ) {
+      return;
+    }
+
+    keys.delete(
+      keyName(event)
+    );
+  },
+  true
+);
+
+window.addEventListener(
+  'blur',
+  () => keys.clear()
+);
+
+window.addEventListener(
+  'resize',
+  () => {
+    resize();
+    reset();
+  }
+);
+
+resize();
+reset();
+requestAnimationFrame(frame);
