@@ -955,6 +955,23 @@ function fireWeapons(ship) {
       ship
     );
 
+  /*
+   * TEMPORARY GUN DIAGNOSTIC
+   *
+   * This tells us whether the collected gun is actually present
+   * when the ship fires.
+   *
+   * Expected after collecting one extra gun:
+   * FIRING: 2 guns / 2 bullets
+   */
+  console.log(
+    'FIRING:',
+    weaponSystem.getGunCount(),
+    'guns /',
+    emitters.length,
+    'bullets'
+  );
+
   emitters.forEach(
     (emitter) => {
       world.bullets.push(
