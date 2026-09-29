@@ -1,4 +1,5 @@
 import { Asteroid } from './asteroid.js';
+import { asteroidDirector } from './asteroidDirector.js';
 import { Bullet } from './bullet.js';
 import { Camera } from './camera.js';
 import { HomingMissile } from './homingMissile.js';
@@ -23,7 +24,6 @@ import {
   updateRemotePlayers
 } from './multiplayer.js';
 
-
 const canvas = document.querySelector('#gameCanvas');
 const ctx = canvas.getContext('2d');
 const keys = new Set();
@@ -35,44 +35,26 @@ const scoreNodes = {
 const startHint = document.querySelector('#startHint');
 const gameShell = document.querySelector('.game-shell');
 
-
 const spelling = new SpellingChallengeController({
   overlay: document.querySelector('#wormholeOverlay'),
   onComplete: respawnPlayer
 });
 
-
 let width = 0;
 let height = 0;
 let worldWidth = 0;
 let worldHeight = 0;
-
 let lastTime = performance.now();
 
 let hasStarted = false;
 let multiplayerJoined = false;
 let pickupInProgress = false;
 
-
-/*
- * Prevent repeated destruction requests while Firebase is deciding
- * which browser won the destruction transaction.
- */
 const asteroidDestructionPending = new Set();
-
-
-/*
- * Remember shared destructions we have already processed.
- *
- * This lets another player's asteroid destruction create ONE explosion
- * on this browser when the Firebase destruction record arrives.
- */
 const processedDestroyedAsteroids = new Set();
-
 
 const camera = new Camera();
 let safeZones = null;
-
 
 const world = {
   ships: [],
@@ -87,7 +69,6 @@ const world = {
     A: 0
   }
 };
-
 
 const controls = {
   A: {
@@ -128,55 +109,90 @@ function resize() {
 
 
 /*
- * SHARED DETERMINISTIC ASTEROID FIELD
+ * Creates one new ordinary asteroid.
  *
- * Every ordinary asteroid receives:
- *
- * - the same starting ratio
- * - the same seed
- * - the same stable ID
- *
- * asteroid.js uses the seed to determine its shape, direction,
- * rotation and speed.
- *
- * Firebase does NOT transmit asteroid positions every frame.
- * Firebase only synchronizes destruction.
+ * asteroidDirector gives every asteroid a unique field-generation ID
+ * so a replacement cannot inherit an old Firebase destruction record.
  */
-function spawnAsteroids() {
-  const layout = [
-    [0.18, 0.24],
-    [0.37, 0.18],
-    [0.67, 0.22],
-    [0.82, 0.39],
-    [0.22, 0.68],
-    [0.48, 0.78],
-    [0.76, 0.72]
-  ];
-
-  world.asteroids = layout.map(
-    ([xRatio, yRatio], index) => {
-      const seed = index + 1;
-      const id = `asteroid-${seed}`;
-
-      return new Asteroid(
-        worldWidth * xRatio,
-        worldHeight * yRatio,
-        'large',
-        seed,
-        id
-      );
-    }
-  );
+function createAsteroid() {
+  const identity = asteroidDirector.createAsteroidIdentity();
 
   /*
-   * A player joining after some asteroids have already been destroyed
-   * must not see those destroyed rocks.
+   * Spawn around the outer region rather than directly in the middle
+   * of the play field.
    */
-  if (multiplayerJoined) {
-    const destroyed = getDestroyedAsteroids();
+  const side = Math.floor(random(0, 4));
+  const margin = 70;
 
-    world.asteroids = world.asteroids.filter(
-      (asteroid) => !destroyed.has(asteroid.id)
+  let x;
+  let y;
+
+  if (side === 0) {
+    x = random(margin, worldWidth - margin);
+    y = margin;
+  } else if (side === 1) {
+    x = worldWidth - margin;
+    y = random(margin, worldHeight - margin);
+  } else if (side === 2) {
+    x = random(margin, worldWidth - margin);
+    y = worldHeight - margin;
+  } else {
+    x = margin;
+    y = random(margin, worldHeight - margin);
+  }
+
+  return new Asteroid(
+    x,
+    y,
+    'large',
+    identity.seed,
+    identity.id
+  );
+}
+
+
+/*
+ * Creates a completely new ordinary asteroid field.
+ *
+ * Initial game:
+ * 10 asteroids.
+ *
+ * MR. K destruction:
+ * complete field reset at the newly advanced difficulty cap.
+ */
+function spawnAsteroids(count = asteroidDirector.getCap()) {
+  world.asteroids = [];
+
+  asteroidDestructionPending.clear();
+  processedDestroyedAsteroids.clear();
+
+  for (let index = 0; index < count; index += 1) {
+    world.asteroids.push(createAsteroid());
+  }
+}
+
+
+/*
+ * Normal asteroid replenishment.
+ *
+ * This adds exactly ONE asteroid whenever the current tier's interval
+ * expires, but only when the field is below its current cap.
+ *
+ * Tier 1: cap 10 / every 60 sec
+ * Tier 2: cap 20 / every 50 sec
+ * Tier 3: cap 30 / every 40 sec
+ * Tier 4: cap 40 / every 30 sec
+ * Tier 5: cap 50 / every 20 sec
+ * Tier 6: cap 60 / every 10 sec
+ */
+function updateAsteroidRespawn() {
+  if (
+    asteroidDirector.shouldRespawn(
+      world.asteroids.length
+    )
+  ) {
+    world.asteroids.push(
+      createAsteroid()
     );
   }
 }
@@ -190,69 +206,28 @@ function spawnMrK() {
 }
 
 
-function addExplosion(
-  x,
-  y,
-  color,
-  count = 10,
-  spread = 4
-) {
-  for (
-    let index = 0;
-    index < count;
-    index += 1
-  ) {
-    const angle = random(
-      0,
-      Math.PI * 2
-    );
+function addExplosion(x, y, color, count = 10, spread = 4) {
+  for (let index = 0; index < count; index += 1) {
+    const angle = random(0, Math.PI * 2);
 
     world.particles.push({
       x,
       y,
-
-      velocityX:
-        Math.cos(angle) *
-        random(1, spread),
-
-      velocityY:
-        Math.sin(angle) *
-        random(1, spread),
-
-      life:
-        random(0.25, 0.65),
-
+      velocityX: Math.cos(angle) * random(1, spread),
+      velocityY: Math.sin(angle) * random(1, spread),
+      life: random(0.25, 0.65),
       color,
-
-      length:
-        random(3, 10)
+      length: random(3, 10)
     });
   }
 }
 
 
 function addRockExplosion(x, y) {
-  addExplosion(
-    x,
-    y,
-    '#ff875f',
-    70,
-    7
-  );
+  addExplosion(x, y, '#ff875f', 70, 7);
+  addExplosion(x, y, '#f1f0ea', 45, 11);
 
-  addExplosion(
-    x,
-    y,
-    '#f1f0ea',
-    45,
-    11
-  );
-
-  for (
-    let index = 0;
-    index < 8;
-    index += 1
-  ) {
+  for (let index = 0; index < 8; index += 1) {
     addExplosion(
       x + random(-50, 50),
       y + random(-50, 50),
@@ -285,15 +260,16 @@ function reset() {
   };
 
   weaponSystem.reset();
+  asteroidDirector.reset();
 
-  spawnAsteroids();
+  /*
+   * Game always begins with exactly 10 ordinary asteroids.
+   */
+  spawnAsteroids(10);
   spawnMrK();
 
-  camera.x =
-    worldWidth * 0.5;
-
-  camera.y =
-    worldHeight * 0.5;
+  camera.x = worldWidth * 0.5;
+  camera.y = worldHeight * 0.5;
 
   camera.update(
     world.ships,
@@ -309,19 +285,15 @@ function reset() {
 
 function updateScores() {
   scoreNodes.A.textContent =
-    String(world.scores.A)
-      .padStart(5, '0');
+    String(world.scores.A).padStart(5, '0');
 }
 
 
 function suspendPlayerControls(playerId) {
   if (!controls[playerId]) return;
 
-  Object.values(
-    controls[playerId]
-  ).forEach(
-    (control) =>
-      keys.delete(control)
+  Object.values(controls[playerId]).forEach(
+    (control) => keys.delete(control)
   );
 }
 
@@ -330,89 +302,49 @@ function suspendPlayerControls(playerId) {
    SHARED ASTEROIDS
    ========================================================= */
 
-/*
- * Apply destruction records received from Firebase.
- *
- * Example:
- *
- * Browser 1 destroys asteroid-4.
- *
- * Firebase:
- * destroyedAsteroids/asteroid-4
- *
- * Browser 2 receives that record here.
- *
- * Browser 2 finds its local asteroid-4, creates the explosion at that
- * asteroid's current position, and removes it.
- *
- * Same ID = same asteroid disappears for everyone.
- */
 function syncDestroyedAsteroids() {
   if (!multiplayerJoined) return;
 
-  const destroyed =
-    getDestroyedAsteroids();
+  const destroyed = getDestroyedAsteroids();
 
-  destroyed.forEach(
-    (_record, asteroidId) => {
-      if (
-        processedDestroyedAsteroids.has(
-          asteroidId
-        )
-      ) {
-        return;
-      }
+  destroyed.forEach((_record, asteroidId) => {
+    if (processedDestroyedAsteroids.has(asteroidId)) {
+      return;
+    }
 
-      const asteroidIndex =
-        world.asteroids.findIndex(
-          (asteroid) =>
-            asteroid.id === asteroidId
-        );
-
-      if (asteroidIndex >= 0) {
-        const asteroid =
-          world.asteroids[
-            asteroidIndex
-          ];
-
-        addExplosion(
-          asteroid.x,
-          asteroid.y,
-          '#f1f0ea',
-          16,
-          4
-        );
-
-        world.asteroids.splice(
-          asteroidIndex,
-          1
-        );
-      }
-
-      processedDestroyedAsteroids.add(
-        asteroidId
+    const asteroidIndex =
+      world.asteroids.findIndex(
+        (asteroid) => asteroid.id === asteroidId
       );
 
-      asteroidDestructionPending.delete(
-        asteroidId
+    if (asteroidIndex >= 0) {
+      const asteroid = world.asteroids[asteroidIndex];
+
+      addExplosion(
+        asteroid.x,
+        asteroid.y,
+        '#f1f0ea',
+        16,
+        4
+      );
+
+      world.asteroids.splice(
+        asteroidIndex,
+        1
       );
     }
-  );
+
+    processedDestroyedAsteroids.add(
+      asteroidId
+    );
+
+    asteroidDestructionPending.delete(
+      asteroidId
+    );
+  });
 }
 
 
-/*
- * Destroy an ordinary asteroid through Firebase.
- *
- * The Firebase transaction in multiplayer.js makes the destruction
- * authoritative. If two students hit the same asteroid simultaneously,
- * only one destruction record wins.
- *
- * We remove the asteroid locally immediately so the shot feels
- * responsive. If Firebase rejects/fails the destruction for an actual
- * network reason, the asteroid is restored from its deterministic
- * definition on the next reset rather than creating duplicate children.
- */
 async function destroyAsteroid(
   asteroid,
   color = '#f1f0ea'
@@ -420,9 +352,7 @@ async function destroyAsteroid(
   if (
     !asteroid ||
     !asteroid.id ||
-    asteroidDestructionPending.has(
-      asteroid.id
-    )
+    asteroidDestructionPending.has(asteroid.id)
   ) {
     return false;
   }
@@ -433,8 +363,7 @@ async function destroyAsteroid(
 
   const asteroidIndex =
     world.asteroids.findIndex(
-      (candidate) =>
-        candidate.id === asteroid.id
+      (candidate) => candidate.id === asteroid.id
     );
 
   if (asteroidIndex >= 0) {
@@ -444,11 +373,6 @@ async function destroyAsteroid(
     );
   }
 
-  /*
-   * The browser that caused the destruction gets immediate visual
-   * feedback. processedDestroyedAsteroids prevents another explosion
-   * when its own Firebase record comes back.
-   */
   addExplosion(
     asteroid.x,
     asteroid.y,
@@ -463,10 +387,6 @@ async function destroyAsteroid(
         asteroid.id
       );
 
-    /*
-     * result=false normally means another browser already destroyed
-     * this same asteroid. In that case keeping it removed is correct.
-     */
     if (!destroyed) {
       const shared =
         getDestroyedAsteroids();
@@ -499,6 +419,35 @@ async function destroyAsteroid(
 
 
 /* =========================================================
+   MR. K DIFFICULTY ADVANCE
+   ========================================================= */
+
+/*
+ * Destroying MR. K immediately advances one difficulty tier.
+ *
+ * Unlike ordinary asteroid replenishment, this performs a COMPLETE
+ * ordinary-asteroid reset at the new cap.
+ */
+function advanceAsteroidsFromMrK() {
+  const result =
+    asteroidDirector.mrKDestroyed();
+
+  spawnAsteroids(
+    result.cap
+  );
+
+  console.log(
+    'MR. K DESTROYED — ASTEROID TIER:',
+    result.tierNumber,
+    'CAP:',
+    result.cap,
+    'RESPAWN:',
+    `${result.respawnSeconds}s`
+  );
+}
+
+
+/* =========================================================
    GUN DROPS
    ========================================================= */
 
@@ -519,10 +468,6 @@ async function dropLocalGuns(ship) {
       gunCount
     );
 
-  /*
-   * Death removes the complete arsenal.
-   * Respawn begins again with one gun.
-   */
   weaponSystem.setGunCount(1);
 
   if (drops.length) {
@@ -531,12 +476,6 @@ async function dropLocalGuns(ship) {
 }
 
 
-/*
- * Firebase timestamps use Date.now().
- * weaponSystem uses performance.now().
- *
- * Convert shared expiration into the local performance clock.
- */
 function firebaseDropToLocal(drop) {
   const remainingMs =
     Math.max(
@@ -550,13 +489,8 @@ function firebaseDropToLocal(drop) {
 
   return {
     ...drop,
-
-    createdAt:
-      localNow,
-
-    expiresAt:
-      localNow +
-      remainingMs
+    createdAt: localNow,
+    expiresAt: localNow + remainingMs
   };
 }
 
@@ -568,9 +502,7 @@ function syncGunDrops() {
     getGunDrops();
 
   const sharedIds =
-    new Set(
-      sharedDrops.keys()
-    );
+    new Set(sharedDrops.keys());
 
   sharedDrops.forEach(
     (drop, id) => {
@@ -605,11 +537,7 @@ function syncGunDrops() {
     }
   );
 
-  for (
-    const id of [
-      ...weaponSystem.drops.keys()
-    ]
-  ) {
+  for (const id of [...weaponSystem.drops.keys()]) {
     if (!sharedIds.has(id)) {
       weaponSystem.removeDrop(id);
     }
@@ -627,8 +555,7 @@ async function checkGunPickup() {
 
   const ship =
     world.ships.find(
-      (candidate) =>
-        candidate.owner === 'A'
+      (candidate) => candidate.owner === 'A'
     );
 
   if (
@@ -674,9 +601,6 @@ async function checkGunPickup() {
         2
       );
 
-      /*
-       * Immediately publish new gun total.
-       */
       publishPlayerState(true);
     }
   } catch (error) {
@@ -699,9 +623,7 @@ function updateGunDrops() {
 
   getGunDrops().forEach(
     (drop, id) => {
-      if (
-        now >= drop.expiresAt
-      ) {
+      if (now >= drop.expiresAt) {
         removeExpiredGunDrop(id);
       }
     }
@@ -747,9 +669,6 @@ function playerDestroyed(
     reason
   });
 
-  /*
-   * Make the invisible/dead state reach other browsers immediately.
-   */
   publishPlayerState(true);
 
   return true;
@@ -774,11 +693,9 @@ function respawnPlayer(playerId) {
 
 
 function releaseMissiles() {
-  for (
-    let index = 0;
-    index < 20;
-    index += 1
-  ) {
+  if (!world.mrK) return;
+
+  for (let index = 0; index < 20; index += 1) {
     const angle =
       (index / 20) *
       Math.PI *
@@ -795,7 +712,6 @@ function releaseMissiles() {
           world.mrK.radius,
 
         angle,
-
         world.mrK.radius
       )
     );
@@ -820,17 +736,13 @@ function syncRemoteShips(dt) {
     getRemotePlayers();
 
   const remoteIds =
-    new Set(
-      remotePlayers.keys()
-    );
+    new Set(remotePlayers.keys());
 
   world.ships =
     world.ships.filter(
       (ship) =>
         ship.owner === 'A' ||
-        remoteIds.has(
-          ship.owner
-        )
+        remoteIds.has(ship.owner)
     );
 
   remotePlayers.forEach(
@@ -856,26 +768,14 @@ function syncRemoteShips(dt) {
       }
 
       ship.remote = true;
-      ship.displayName =
-        remote.name;
+      ship.displayName = remote.name;
 
-      ship.x =
-        remote.renderX;
-
-      ship.y =
-        remote.renderY;
-
-      ship.angle =
-        remote.renderAngle;
-
-      ship.velocityX =
-        remote.velocityX;
-
-      ship.velocityY =
-        remote.velocityY;
-
-      ship.visible =
-        remote.visible;
+      ship.x = remote.renderX;
+      ship.y = remote.renderY;
+      ship.angle = remote.renderAngle;
+      ship.velocityX = remote.velocityX;
+      ship.velocityY = remote.velocityY;
+      ship.visible = remote.visible;
 
       ship.state =
         remote.visible
@@ -906,24 +806,12 @@ function publishPlayerState(
     {
       x: ship.x,
       y: ship.y,
-
-      angle:
-        ship.angle,
-
-      velocityX:
-        ship.velocityX,
-
-      velocityY:
-        ship.velocityY,
-
-      visible:
-        ship.visible,
-
-      score:
-        world.scores.A,
-
-      guns:
-        weaponSystem.getGunCount()
+      angle: ship.angle,
+      velocityX: ship.velocityX,
+      velocityY: ship.velocityY,
+      visible: ship.visible,
+      score: world.scores.A,
+      guns: weaponSystem.getGunCount()
     },
     force
   );
@@ -934,21 +822,6 @@ function publishPlayerState(
    MULTI-GUN FIRING
    ========================================================= */
 
-/*
- * Ship.update() owns the cooldown.
- *
- * Its returned single Bullet is used only as the FIRE TRIGGER.
- *
- * weaponSystem creates the actual emitters:
- *
- *  1 gun  = 1 bullet
- *  2 guns = 2 parallel bullets
- * ...
- * 10 guns = 10 forward
- * 11 guns = 10 forward + 1 backward
- * ...
- * 40 guns = 10 each direction
- */
 function fireWeapons(ship) {
   const emitters =
     weaponSystem.getEmitters(
@@ -956,13 +829,7 @@ function fireWeapons(ship) {
     );
 
   /*
-   * TEMPORARY GUN DIAGNOSTIC
-   *
-   * This tells us whether the collected gun is actually present
-   * when the ship fires.
-   *
-   * Expected after collecting one extra gun:
-   * FIRING: 2 guns / 2 bullets
+   * TEMPORARY GUN DIAGNOSTIC.
    */
   console.log(
     'FIRING:',
@@ -997,7 +864,6 @@ function update(dt) {
   syncRemoteShips(dt);
   syncDestroyedAsteroids();
   updateGunDrops();
-
 
   /* =======================================================
      SHIPS
@@ -1054,9 +920,6 @@ function update(dt) {
         bullet.life > 0
     );
 
-
-  /* BULLET → SAFE ZONE */
-
   if (safeZones) {
     world.bullets =
       world.bullets.filter(
@@ -1072,11 +935,9 @@ function update(dt) {
           addExplosion(
             bullet.x,
             bullet.y,
-
             bullet.owner === 'A'
               ? '#ff875f'
               : '#72e6dd',
-
             5,
             2
           );
@@ -1100,16 +961,14 @@ function update(dt) {
       )
   );
 
+  /*
+   * Normal replenishment:
+   * exactly ONE replacement when the current tier interval expires.
+   */
+  updateAsteroidRespawn();
 
   /*
    * ASTEROID → SAFE ZONE
-   *
-   * No splitting.
-   *
-   * If a moving asteroid hits one of the protective L walls,
-   * destroy that asteroid through the SAME shared Firebase system.
-   * Therefore it disappears for everybody rather than only the
-   * browser that happened to calculate the wall collision first.
    */
   if (safeZones) {
     world.asteroids
@@ -1175,9 +1034,6 @@ function update(dt) {
         return missile.life > 0;
       }
     );
-
-
-  /* MISSILE → SAFE ZONE */
 
   if (safeZones) {
     world.missiles =
@@ -1250,10 +1106,6 @@ function update(dt) {
         bulletIndex
       ];
 
-
-    /*
-     * BULLET → MISSILE
-     */
     const missileIndex =
       world.missiles.findIndex(
         (missile) =>
@@ -1292,10 +1144,6 @@ function update(dt) {
       continue;
     }
 
-
-    /*
-     * BULLET → ASTEROID
-     */
     const asteroidIndex =
       world.asteroids.findIndex(
         (asteroid) =>
@@ -1319,34 +1167,21 @@ function update(dt) {
       continue;
     }
 
-
     const asteroid =
       world.asteroids[
         asteroidIndex
       ];
 
-
-    /*
-     * The bullet is consumed immediately.
-     */
     world.bullets.splice(
       bulletIndex,
       1
     );
 
-
-    /*
-     * Only our local bullets exist in this browser at present.
-     *
-     * Claim the asteroid through Firebase.
-     * No split children are created.
-     */
     const asteroidId =
       asteroid.id;
 
     const asteroidPoints =
       asteroid.points;
-
 
     destroyAsteroid(
       asteroid,
@@ -1356,12 +1191,6 @@ function update(dt) {
         : '#72e6dd'
     ).then(
       (wonDestruction) => {
-        /*
-         * Award points only to the browser that successfully created
-         * the authoritative Firebase destruction record.
-         *
-         * This prevents two students receiving points for the same rock.
-         */
         if (
           wonDestruction &&
           bullet.owner === 'A'
@@ -1440,11 +1269,9 @@ function update(dt) {
       addExplosion(
         bullet.x,
         bullet.y,
-
         bullet.owner === 'A'
           ? '#ff875f'
           : '#72e6dd',
-
         2,
         2
       );
@@ -1452,12 +1279,31 @@ function update(dt) {
       if (
         world.mrK.health === 0
       ) {
+        /*
+         * Save the position before nulling MR. K.
+         */
+        const mrKX =
+          world.mrK.x;
+
+        const mrKY =
+          world.mrK.y;
+
+        /*
+         * Missiles need the live MR. K position/radius,
+         * so release them before clearing the rock.
+         */
+        releaseMissiles();
+
         addRockExplosion(
-          world.mrK.x,
-          world.mrK.y
+          mrKX,
+          mrKY
         );
 
-        releaseMissiles();
+        /*
+         * MR. K destruction immediately advances the ordinary
+         * asteroid difficulty and performs a FULL field reset.
+         */
+        advanceAsteroidsFromMrK();
 
         world.mrK = null;
         world.mrKRespawnTimer = 60;
@@ -1508,9 +1354,6 @@ function update(dt) {
       1
     );
 
-    /*
-     * Each browser remains authoritative for its own death.
-     */
     if (
       target.owner === 'A' &&
 
@@ -1592,7 +1435,6 @@ function update(dt) {
       continue;
     }
 
-
     const target =
       world.ships.find(
         (ship) =>
@@ -1634,7 +1476,7 @@ function update(dt) {
 
 
   /* =======================================================
-     LOCAL SHIP → ASTEROID
+     LOCAL SHIP → ASTEROID / MR. K
      ======================================================= */
 
   const localShip =
@@ -1657,17 +1499,12 @@ function update(dt) {
             worldHeight
           ) <
           candidate.radius +
-          11
+          (localShip.radius ?? 11)
       );
 
-
     /*
-     * IMPORTANT:
-     *
-     * Crashing a ship into an asteroid destroys the SHIP,
-     * not the asteroid.
-     *
-     * The asteroid remains part of the shared world.
+     * Ordinary asteroid collision:
+     * ship dies; asteroid survives.
      */
     if (
       asteroid &&
@@ -1687,18 +1524,47 @@ function update(dt) {
   }
 
 
-  /* =======================================================
-     RESPAWNS
-     ======================================================= */
-
   /*
-   * DO NOT automatically call spawnAsteroids() when the array becomes
-   * empty. Those asteroids may all be legitimately destroyed in the
-   * shared Firebase world.
+   * MR. K IS SOLID AND LETHAL.
    *
-   * A future new-round/reset mechanism can clear destroyedAsteroids
-   * and create a fresh field deliberately.
+   * This was missing from the previous game.
+   *
+   * Flying into the giant MR. K asteroid kills the ship exactly like
+   * hitting an ordinary asteroid. MR. K itself is not damaged.
    */
+  if (
+    localShip &&
+    localShip.visible &&
+    world.mrK &&
+
+    wrappedDistance(
+      localShip,
+      world.mrK,
+      worldWidth,
+      worldHeight
+    ) <
+    world.mrK.radius +
+    (localShip.radius ?? 11)
+  ) {
+    if (
+      playerDestroyed(
+        'A',
+        'mr-k-collision'
+      )
+    ) {
+      addExplosion(
+        localShip.x,
+        localShip.y,
+        '#ff875f',
+        22
+      );
+    }
+  }
+
+
+  /* =======================================================
+     MR. K RESPAWN
+     ======================================================= */
 
   if (!world.mrK) {
     world.mrKRespawnTimer -=
@@ -1788,7 +1654,6 @@ function drawWorld() {
     safeZones.draw(ctx);
   }
 
-
   world.asteroids.forEach(
     (asteroid) =>
       asteroid.draw(
@@ -1798,7 +1663,6 @@ function drawWorld() {
       )
   );
 
-
   if (world.mrK) {
     world.mrK.draw(
       ctx,
@@ -1807,7 +1671,6 @@ function drawWorld() {
     );
   }
 
-
   world.bullets.forEach(
     (bullet) =>
       drawWrapped(
@@ -1815,14 +1678,12 @@ function drawWorld() {
         bullet,
         worldWidth,
         worldHeight,
-
         (drawCtx) =>
           bullet.draw(
             drawCtx
           )
       )
   );
-
 
   world.missiles.forEach(
     (missile) =>
@@ -1833,7 +1694,6 @@ function drawWorld() {
       )
   );
 
-
   world.ships.forEach(
     (ship) =>
       ship.draw(
@@ -1843,12 +1703,7 @@ function drawWorld() {
       )
   );
 
-
-  /*
-   * Flashing red gun pickups and countdown.
-   */
   weaponSystem.draw(ctx);
-
 
   world.particles.forEach(
     (particle) => {
@@ -2006,8 +1861,7 @@ bindPilotLogin(
         0,
 
       visible:
-        ship?.visible !==
-        false,
+        ship?.visible !== false,
 
       score:
         world.scores.A,
@@ -2016,7 +1870,6 @@ bindPilotLogin(
         weaponSystem.getGunCount()
     };
   },
-
 
   (identity) => {
     const ship =
@@ -2030,13 +1883,8 @@ bindPilotLogin(
         identity.name;
     }
 
-    multiplayerJoined =
-      true;
+    multiplayerJoined = true;
 
-    /*
-     * Immediately remove asteroids that were destroyed before
-     * this player joined.
-     */
     syncDestroyedAsteroids();
 
     hasStarted = true;
@@ -2058,7 +1906,6 @@ gameShell.style.setProperty(
   '--ui-scale',
   '1'
 );
-
 
 gameShell.addEventListener(
   'input',
@@ -2146,7 +1993,6 @@ document.addEventListener(
   true
 );
 
-
 document.addEventListener(
   'keyup',
 
@@ -2171,7 +2017,6 @@ document.addEventListener(
   true
 );
 
-
 window.addEventListener(
   'blur',
   () => keys.clear()
@@ -2179,22 +2024,26 @@ window.addEventListener(
 
 
 /*
- * Preserve the prototype's resize behaviour.
+ * Resize the current world without restarting the difficulty clock.
  *
- * Shared Firebase destruction records are reapplied after reset(),
- * so resizing cannot resurrect an asteroid that another player
- * already destroyed.
+ * IMPORTANT:
+ * Do NOT call reset() here. reset() intentionally starts a new game,
+ * so using it for a browser resize would reset the asteroid director
+ * to tier 1.
  */
 window.addEventListener(
   'resize',
 
   () => {
     resize();
-    reset();
 
-    if (multiplayerJoined) {
-      syncDestroyedAsteroids();
-    }
+    camera.update(
+      world.ships,
+      width,
+      height,
+      worldWidth,
+      worldHeight
+    );
   }
 );
 
