@@ -3,27 +3,28 @@
  *
  * Coordinates shared asteroid destruction between:
  *
- *   local game world
- *        ↓
+ *   game.js
+ *      ↓
  *   asteroidMultiplayer.js
- *        ↓
+ *      ↓
  *   asteroidNetwork.js
- *        ↓
- *      Firebase
+ *      ↓
+ *   Firebase
  *
  * Owns:
- * - pending asteroid destruction IDs
- * - processed asteroid destruction IDs
- * - applying remote destruction events to the local world
+ * - pending local destruction claims
+ * - processed shared destruction records
+ * - applying remote destruction to the local asteroid field
  * - requesting authoritative shared destruction
  *
  * Does NOT own:
- * - Firebase implementation
+ * - Firebase transport
  * - asteroid construction
+ * - asteroid movement
  * - asteroid difficulty
  * - asteroid respawn timing
- * - asteroid movement
  * - scoring
+ * - world ownership
  */
 
 import {
@@ -41,9 +42,12 @@ export function createAsteroidMultiplayerSystem({
   isMultiplayerJoined,
   addExplosion
 }) {
-  if (!world) {
+  if (
+    !world ||
+    !Array.isArray(world.asteroids)
+  ) {
     throw new Error(
-      'AsteroidMultiplayerSystem requires world.'
+      'AsteroidMultiplayerSystem requires world.asteroids.'
     );
   }
 
@@ -71,29 +75,70 @@ export function createAsteroidMultiplayerSystem({
      ======================================================= */
 
   /*
-   * pending:
+   * IDs currently being submitted for authoritative
+   * destruction.
    *
-   * An asteroid has already been removed locally and an
-   * authoritative Firebase destruction claim is currently
-   * in flight.
-   *
-   * This prevents multiple bullets in the same browser from
-   * attempting to destroy the same asteroid.
+   * Prevents duplicate destruction attempts from the same
+   * browser while Firebase resolves the transaction.
    */
   const pending =
     new Set();
 
 
   /*
-   * processed:
+   * Shared destruction records already consumed by this
+   * browser.
    *
-   * Destruction records already applied to this browser.
-   *
-   * Firebase retains destruction history, so without this
-   * set the same record would be processed every frame.
+   * Firebase retains destruction history, so this prevents
+   * processing the same record every frame.
    */
   const processed =
     new Set();
+
+
+  /* =======================================================
+     HELPERS
+     ======================================================= */
+
+  function findAsteroidIndex(
+    asteroidId
+  ) {
+    return world.asteroids.findIndex(
+      (asteroid) =>
+        asteroid.id ===
+        asteroidId
+    );
+  }
+
+
+  function removeLocalAsteroid(
+    asteroidId
+  ) {
+    const asteroidIndex =
+      findAsteroidIndex(
+        asteroidId
+      );
+
+    if (
+      asteroidIndex <
+      0
+    ) {
+      return null;
+    }
+
+    const [
+      asteroid
+    ] =
+      world.asteroids.splice(
+        asteroidIndex,
+        1
+      );
+
+    return (
+      asteroid ||
+      null
+    );
+  }
 
 
   /* =======================================================
@@ -101,11 +146,11 @@ export function createAsteroidMultiplayerSystem({
      ======================================================= */
 
   /*
-   * Called whenever asteroidDirector replaces the entire
+   * Called whenever asteroidDirector replaces the complete
    * deterministic asteroid field.
    *
-   * The Firebase destruction history itself is NOT cleared
-   * here. That is a separate room-wide network operation.
+   * This resets only browser-local synchronization state.
+   * It does NOT delete Firebase destruction history.
    */
   function resetField() {
     pending.clear();
@@ -117,10 +162,6 @@ export function createAsteroidMultiplayerSystem({
      PENDING QUERY
      ======================================================= */
 
-  /*
-   * CollisionSystem uses this instead of receiving direct
-   * access to the pending Set.
-   */
   function isPending(
     asteroidId
   ) {
@@ -135,13 +176,16 @@ export function createAsteroidMultiplayerSystem({
 
 
   /* =======================================================
-     REMOTE DESTRUCTION SYNCHRONIZATION
+     SHARED DESTRUCTION SYNCHRONIZATION
      ======================================================= */
 
   /*
-   * Applies authoritative destruction records received from
-   * asteroidNetwork.js to this browser's local asteroid
-   * world.
+   * Apply authoritative Firebase destruction records to this
+   * browser's local asteroid field.
+   *
+   * A locally initiated destruction has normally removed its
+   * asteroid before the Firebase listener receives the record.
+   * In that case no second explosion is created.
    */
   function sync() {
     if (
@@ -158,10 +202,6 @@ export function createAsteroidMultiplayerSystem({
         _record,
         asteroidId
       ) => {
-        /*
-         * This destruction record has already been applied
-         * locally.
-         */
         if (
           processed.has(
             asteroidId
@@ -171,34 +211,17 @@ export function createAsteroidMultiplayerSystem({
         }
 
 
-        /*
-         * Every browser deterministically creates the same
-         * asteroid IDs, so the authoritative destruction ID
-         * is sufficient to locate the local asteroid.
-         */
-        const asteroidIndex =
-          world.asteroids.findIndex(
-            (asteroid) =>
-              asteroid.id ===
-              asteroidId
+        const asteroid =
+          removeLocalAsteroid(
+            asteroidId
           );
 
 
         /*
-         * The asteroid may already be absent locally because
-         * this browser initiated the destruction.
-         *
-         * Only create the remote destruction explosion when
-         * the asteroid still exists in this world.
+         * The asteroid still existed locally, so this browser
+         * is learning about a destruction performed elsewhere.
          */
-        if (
-          asteroidIndex >= 0
-        ) {
-          const asteroid =
-            world.asteroids[
-              asteroidIndex
-            ];
-
+        if (asteroid) {
           addExplosion(
             asteroid.x,
             asteroid.y,
@@ -206,18 +229,9 @@ export function createAsteroidMultiplayerSystem({
             16,
             4
           );
-
-          world.asteroids.splice(
-            asteroidIndex,
-            1
-          );
         }
 
 
-        /*
-         * Whether the asteroid was present or already gone,
-         * this authoritative record has now been consumed.
-         */
         processed.add(
           asteroidId
         );
@@ -231,26 +245,30 @@ export function createAsteroidMultiplayerSystem({
 
 
   /* =======================================================
-     LOCAL ASTEROID DESTRUCTION
+     LOCAL DESTRUCTION
      ======================================================= */
 
   /*
-   * Removes an asteroid optimistically from the local world
-   * and then asks asteroidNetwork.js to atomically establish
-   * authoritative destruction ownership.
+   * Attempt to destroy one asteroid.
+   *
+   * The asteroid disappears locally immediately so gameplay
+   * does not wait on network latency.
+   *
+   * Firebase then atomically decides which browser owns the
+   * authoritative destruction.
    *
    * Returns:
    *
    * true
-   *   This browser won the Firebase destruction transaction.
+   *   This browser won the authoritative destruction claim.
    *
    * false
-   *   Another browser already destroyed the asteroid, the
-   *   asteroid was already pending locally, or the network
-   *   operation could not be confirmed.
+   *   The asteroid was already destroyed, already pending,
+   *   another browser won the claim, or Firebase could not
+   *   confirm the destruction.
    *
-   * CollisionSystem uses the true result to determine which
-   * browser receives destruction score.
+   * CollisionSystem uses TRUE when deciding whether this
+   * browser receives asteroid-destruction score.
    */
   async function destroy(
     asteroid,
@@ -263,13 +281,13 @@ export function createAsteroidMultiplayerSystem({
       return false;
     }
 
+
     const asteroidId =
       asteroid.id;
 
 
     /*
-     * Prevent duplicate local destruction requests while an
-     * authoritative claim for this asteroid is in flight.
+     * Do not submit duplicate local claims.
      */
     if (
       pending.has(
@@ -281,36 +299,27 @@ export function createAsteroidMultiplayerSystem({
 
 
     /*
-     * If Firebase has already told us this asteroid was
-     * destroyed, there is nothing left to claim.
+     * Firebase has already told us this asteroid was
+     * destroyed.
+     *
+     * Remove any stale local copy but do not attempt another
+     * transaction and do not award destruction ownership.
      */
-    const alreadyDestroyed =
+    const sharedBeforeClaim =
       getDestroyedAsteroids();
 
     if (
-      alreadyDestroyed.has(
+      sharedBeforeClaim.has(
         asteroidId
       )
     ) {
-      processed.add(
+      removeLocalAsteroid(
         asteroidId
       );
 
-      const existingIndex =
-        world.asteroids.findIndex(
-          (candidate) =>
-            candidate.id ===
-            asteroidId
-        );
-
-      if (
-        existingIndex >= 0
-      ) {
-        world.asteroids.splice(
-          existingIndex,
-          1
-        );
-      }
+      processed.add(
+        asteroidId
+      );
 
       return false;
     }
@@ -322,40 +331,34 @@ export function createAsteroidMultiplayerSystem({
 
 
     /*
-     * Remove immediately from the local simulation.
+     * Optimistic local removal.
      *
-     * This prevents another bullet or ship collision from
-     * interacting with the same asteroid while Firebase
-     * resolves the authoritative transaction.
+     * This prevents bullets or ships from interacting with
+     * the same asteroid while the Firebase transaction is
+     * outstanding.
      */
-    const asteroidIndex =
-      world.asteroids.findIndex(
-        (candidate) =>
-          candidate.id ===
-          asteroidId
+    const removedAsteroid =
+      removeLocalAsteroid(
+        asteroidId
       );
-
-    if (
-      asteroidIndex >= 0
-    ) {
-      world.asteroids.splice(
-        asteroidIndex,
-        1
-      );
-    }
 
 
     /*
-     * Local visual feedback happens immediately rather than
-     * waiting for network round-trip latency.
+     * Only produce the local explosion if this asteroid was
+     * actually present in the local field.
+     *
+     * Normally removedAsteroid is the same object supplied
+     * to destroy().
      */
-    addExplosion(
-      asteroid.x,
-      asteroid.y,
-      color,
-      16,
-      4
-    );
+    if (removedAsteroid) {
+      addExplosion(
+        removedAsteroid.x,
+        removedAsteroid.y,
+        color,
+        16,
+        4
+      );
+    }
 
 
     try {
@@ -366,37 +369,42 @@ export function createAsteroidMultiplayerSystem({
 
 
       /*
-       * A false transaction result is normal when another
-       * browser won the race for the same asteroid.
+       * A FALSE transaction result is valid when another
+       * browser won the race.
+       *
+       * The Firebase listener can arrive slightly after the
+       * transaction result, so absence from the local cache
+       * here does not automatically mean an error.
        */
       if (
         !wonDestruction
       ) {
-        const shared =
+        const sharedAfterClaim =
           getDestroyedAsteroids();
 
         if (
-          !shared.has(
+          !sharedAfterClaim.has(
             asteroidId
           )
         ) {
           console.warn(
-            `Asteroid destruction was not confirmed: ${asteroidId}`
+            `Asteroid destruction was not confirmed locally yet: ${asteroidId}`
           );
         }
       }
 
 
       /*
-       * The asteroid has already been removed locally, so
-       * prevent the later Firebase listener record from
-       * generating a duplicate explosion.
+       * The asteroid has already been removed from this
+       * browser. Mark the eventual shared record as consumed
+       * so sync() cannot create a duplicate explosion.
        */
       processed.add(
         asteroidId
       );
 
       return wonDestruction;
+
     } catch (error) {
       console.error(
         'Shared asteroid destruction failed:',
@@ -404,6 +412,7 @@ export function createAsteroidMultiplayerSystem({
       );
 
       return false;
+
     } finally {
       pending.delete(
         asteroidId
