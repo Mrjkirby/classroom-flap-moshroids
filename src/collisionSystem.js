@@ -12,6 +12,7 @@ import {
    Does NOT own:
    - world state
    - asteroid construction
+   - asteroid multiplayer state
    - Firebase
    - player respawning
    - rendering
@@ -29,8 +30,8 @@ import {
  * Tests a moving object's path during the current frame
  * against a circular target.
  *
- * This prevents fast bullets from "tunnelling" through
- * asteroids between frames.
+ * This prevents fast bullets from tunnelling through
+ * targets between frames.
  *
  * moving.previousX / previousY:
  * position before its most recent update.
@@ -49,8 +50,8 @@ function sweptCircleHit(
     (target.radius || 0);
 
   /*
-   * If previous position isn't available yet, safely fall
-   * back to the normal wrapped-circle test.
+   * If previous position is unavailable, fall back to
+   * normal wrapped-circle collision.
    */
   if (
     !Number.isFinite(
@@ -70,15 +71,15 @@ function sweptCircleHit(
     );
   }
 
-  /*
-   * Build the bullet's frame movement using wrapped
-   * coordinates.
-   */
   const previous = {
     x: moving.previousX,
     y: moving.previousY
   };
 
+  /*
+   * Movement taken by the projectile during this frame,
+   * expressed using the shortest wrapped displacement.
+   */
   const movement =
     wrappedDelta(
       previous,
@@ -88,8 +89,8 @@ function sweptCircleHit(
     );
 
   /*
-   * Express the target relative to the bullet's previous
-   * position using the shortest wrapped displacement.
+   * Target position relative to the projectile's previous
+   * position, also using wrapped world geometry.
    */
   const targetDelta =
     wrappedDelta(
@@ -100,11 +101,13 @@ function sweptCircleHit(
     );
 
   const segmentLengthSquared =
-    movement.x * movement.x +
-    movement.y * movement.y;
+    movement.x *
+      movement.x +
+    movement.y *
+      movement.y;
 
   /*
-   * No movement this frame.
+   * Projectile did not meaningfully move this frame.
    */
   if (
     segmentLengthSquared <=
@@ -119,8 +122,8 @@ function sweptCircleHit(
   }
 
   /*
-   * Find the closest point on the bullet's movement segment
-   * to the target centre.
+   * Project the target onto the projectile's movement
+   * segment and clamp the result to the frame path.
    */
   let t =
     (
@@ -160,7 +163,7 @@ function sweptCircleHit(
     dx * dx +
     dy * dy <=
     combinedRadius *
-    combinedRadius
+      combinedRadius
   );
 }
 
@@ -176,6 +179,8 @@ export function createCollisionSystem({
   getWorldHeight,
 
   destroyAsteroid,
+  isAsteroidDestructionPending,
+
   playerDestroyed,
 
   addExplosion,
@@ -185,13 +190,110 @@ export function createCollisionSystem({
   advanceAsteroidsFromMrK,
 
   updateScores,
-  publishPlayerState,
-
-  asteroidDestructionPending
+  publishPlayerState
 }) {
   if (!world) {
     throw new Error(
       'CollisionSystem requires world.'
+    );
+  }
+
+  if (
+    typeof getWorldWidth !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires getWorldWidth.'
+    );
+  }
+
+  if (
+    typeof getWorldHeight !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires getWorldHeight.'
+    );
+  }
+
+  if (
+    typeof destroyAsteroid !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires destroyAsteroid.'
+    );
+  }
+
+  if (
+    typeof isAsteroidDestructionPending !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires isAsteroidDestructionPending.'
+    );
+  }
+
+  if (
+    typeof playerDestroyed !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires playerDestroyed.'
+    );
+  }
+
+  if (
+    typeof addExplosion !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires addExplosion.'
+    );
+  }
+
+  if (
+    typeof addRockExplosion !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires addRockExplosion.'
+    );
+  }
+
+  if (
+    typeof releaseMissiles !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires releaseMissiles.'
+    );
+  }
+
+  if (
+    typeof advanceAsteroidsFromMrK !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires advanceAsteroidsFromMrK.'
+    );
+  }
+
+  if (
+    typeof updateScores !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires updateScores.'
+    );
+  }
+
+  if (
+    typeof publishPlayerState !==
+    'function'
+  ) {
+    throw new Error(
+      'CollisionSystem requires publishPlayerState.'
     );
   }
 
@@ -222,7 +324,7 @@ export function createCollisionSystem({
         worldHeight()
       ) <
       (a.radius || 0) +
-      (b.radius || 0)
+        (b.radius || 0)
     );
   }
 
@@ -305,7 +407,7 @@ export function createCollisionSystem({
       const asteroidIndex =
         world.asteroids.findIndex(
           (asteroid) =>
-            !asteroidDestructionPending.has(
+            !isAsteroidDestructionPending(
               asteroid.id
             ) &&
             projectileHit(
@@ -315,7 +417,8 @@ export function createCollisionSystem({
         );
 
       if (
-        asteroidIndex < 0
+        asteroidIndex <
+        0
       ) {
         continue;
       }
@@ -336,30 +439,41 @@ export function createCollisionSystem({
       const asteroidPoints =
         asteroid.points;
 
-      destroyAsteroid(
-        asteroid,
+      /*
+       * Shared asteroid destruction is asynchronous.
+       *
+       * Scoring is awarded only to the browser that wins
+       * authoritative destruction ownership.
+       */
+      Promise.resolve(
+        destroyAsteroid(
+          asteroid,
 
-        bullet.owner === 'A'
-          ? '#ff875f'
-          : '#72e6dd'
+          bullet.owner === 'A'
+            ? '#ff875f'
+            : '#72e6dd'
+        )
       )
         .then(
           (
             wonDestruction
           ) => {
             if (
-              wonDestruction &&
-              bullet.owner === 'A'
+              !wonDestruction ||
+              bullet.owner !==
+                'A'
             ) {
-              world.scores.A +=
-                asteroidPoints;
-
-              updateScores();
-
-              publishPlayerState(
-                true
-              );
+              return;
             }
+
+            world.scores.A +=
+              asteroidPoints;
+
+            updateScores();
+
+            publishPlayerState(
+              true
+            );
           }
         )
         .catch(
@@ -439,7 +553,8 @@ export function createCollisionSystem({
       );
 
       if (
-        world.mrK.health !== 0
+        world.mrK.health !==
+        0
       ) {
         continue;
       }
@@ -451,8 +566,8 @@ export function createCollisionSystem({
         world.mrK.y;
 
       /*
-       * MR. K must still exist while his missiles are
-       * released because releaseMissiles() reads world.mrK.
+       * MR. K must remain alive until his missiles are
+       * created because releaseMissiles() reads world.mrK.
        */
       releaseMissiles();
 
@@ -470,7 +585,7 @@ export function createCollisionSystem({
         60;
 
       /*
-       * MR. K is gone.
+       * MR. K no longer exists.
        * Remaining bullets cannot hit him this frame.
        */
       break;
@@ -518,12 +633,12 @@ export function createCollisionSystem({
       );
 
       /*
-       * Remote ships are authoritative in their own browser.
-       *
-       * This browser only runs destruction gameplay for A.
+       * Each browser remains authoritative for its own
+       * local player's death.
        */
       if (
-        target.owner === 'A' &&
+        target.owner ===
+          'A' &&
         playerDestroyed(
           'A',
           'enemy-bullet'
@@ -563,8 +678,8 @@ export function createCollisionSystem({
          MISSILE → ROCK
 
          During outbound flight, missiles are intentionally
-         allowed to escape MR. K's body before rock collision
-         becomes active.
+         allowed to escape MR. K before rock collision is
+         activated.
          --------------------------------------------------- */
 
       const rockHit =
@@ -612,7 +727,8 @@ export function createCollisionSystem({
       const target =
         world.ships.find(
           (ship) =>
-            ship.owner === 'A' &&
+            ship.owner ===
+              'A' &&
             ship.visible &&
             circleHit(
               missile,
@@ -654,7 +770,8 @@ export function createCollisionSystem({
     const localShip =
       world.ships.find(
         (ship) =>
-          ship.owner === 'A'
+          ship.owner ===
+          'A'
       );
 
     if (
@@ -670,8 +787,8 @@ export function createCollisionSystem({
     /* ---------------------------------------------------
        SHIP → ASTEROID
 
-       Asteroid survives.
        Ship dies.
+       Asteroid survives.
        --------------------------------------------------- */
 
     const asteroid =
@@ -699,9 +816,8 @@ export function createCollisionSystem({
       }
 
       /*
-       * Whether destroy() succeeds or invulnerability blocks
-       * it, do not process MR. K against the same overlap in
-       * this pass.
+       * Do not process MR. K against the same ship during
+       * this collision pass.
        */
       return;
     }
@@ -760,13 +876,13 @@ export function createCollisionSystem({
   }
 
 
+  /* =======================================================
+     PUBLIC API
+     ======================================================= */
+
   return {
     resolve,
 
-    /*
-     * Exporting individual phases is useful for targeted
-     * regression tests without exposing game internals.
-     */
     resolveBulletRockCollisions,
     resolveBulletMrKCollisions,
     resolveBulletPlayerCollisions,
