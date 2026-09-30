@@ -3,9 +3,12 @@ import { weaponSystem } from './weaponSystem.js';
 import {
   claimGunDrop,
   getGunDrops,
-  getLocalIdentity,
   publishGunDrops,
   removeExpiredGunDrop
+} from './gunDropMultiplayer.js';
+
+import {
+  getLocalIdentity
 } from './multiplayer.js';
 
 
@@ -17,7 +20,7 @@ const MAX_GUNS = 40;
 
    Coordinates:
    - weaponSystem local drop state
-   - Firebase shared drop state
+   - shared Firebase gun-drop state
    - atomic pickup claims
    - gun loss on player death
 
@@ -26,16 +29,14 @@ const MAX_GUNS = 40;
    - rendering
    - Firebase implementation
    - weapon emitter geometry
+   - player authentication
    - world state
    ========================================================= */
 
 export function createGunDropSystem({
   world,
-
   isMultiplayerJoined,
-
   addExplosion,
-
   publishPlayerState
 }) {
   if (!world) {
@@ -43,6 +44,34 @@ export function createGunDropSystem({
       'GunDropSystem requires world.'
     );
   }
+
+  if (
+    typeof isMultiplayerJoined !==
+    'function'
+  ) {
+    throw new Error(
+      'GunDropSystem requires isMultiplayerJoined.'
+    );
+  }
+
+  if (
+    typeof addExplosion !==
+    'function'
+  ) {
+    throw new Error(
+      'GunDropSystem requires addExplosion.'
+    );
+  }
+
+  if (
+    typeof publishPlayerState !==
+    'function'
+  ) {
+    throw new Error(
+      'GunDropSystem requires publishPlayerState.'
+    );
+  }
+
 
   let pickupInProgress =
     false;
@@ -78,10 +107,11 @@ export function createGunDropSystem({
       );
 
     /*
-     * Death always returns the local player to one gun.
+     * Death immediately resets the local player's weapon
+     * count to the starting gun.
      *
-     * This happens immediately. Firebase publication of the
-     * dropped guns is allowed to finish asynchronously.
+     * Firebase publication is network persistence only and
+     * must not delay the local death sequence.
      */
     weaponSystem.setGunCount(
       1
@@ -128,6 +158,13 @@ export function createGunDropSystem({
     return {
       ...drop,
 
+      /*
+       * weaponSystem uses the local performance clock.
+       * Firebase timestamps use the wall clock.
+       *
+       * Convert the remaining lifetime rather than mixing
+       * the two clock domains.
+       */
       createdAt:
         localNow,
 
@@ -159,7 +196,8 @@ export function createGunDropSystem({
 
 
     /*
-     * Add or update every currently available shared drop.
+     * Mirror every currently available Firebase drop into
+     * weaponSystem's local render/pickup collection.
      */
     sharedDrops.forEach(
       (
@@ -187,8 +225,8 @@ export function createGunDropSystem({
             localDrop.radius;
 
           /*
-           * Never extend the lifetime of an existing local
-           * drop because of network timing.
+           * Network refreshes must never accidentally extend
+           * an already-running local expiration timer.
            */
           existing.expiresAt =
             Math.min(
@@ -207,12 +245,10 @@ export function createGunDropSystem({
 
 
     /*
-     * Remove local drops that Firebase no longer advertises.
+     * Firebase is authoritative for drop availability.
      *
-     * This includes:
-     * - successfully claimed drops
-     * - expired drops
-     * - externally removed drops
+     * A drop disappearing from the shared collection means
+     * it was claimed, expired, or otherwise removed.
      */
     for (
       const id of
@@ -221,14 +257,16 @@ export function createGunDropSystem({
       ]
     ) {
       if (
-        !sharedIds.has(
+        sharedIds.has(
           id
         )
       ) {
-        weaponSystem.removeDrop(
-          id
-        );
+        continue;
       }
+
+      weaponSystem.removeDrop(
+        id
+      );
     }
   }
 
@@ -275,20 +313,22 @@ export function createGunDropSystem({
       return;
     }
 
+
     /*
-     * Save the visual position before awaiting Firebase.
+     * Preserve everything needed after the await.
      *
-     * The shared listener may remove this drop from the local
-     * map while claimGunDrop() is awaiting its transaction.
+     * Firebase's listener can remove the local drop as soon
+     * as the transaction marks it claimed.
      */
+    const dropId =
+      drop.id;
+
     const pickupX =
       drop.x;
 
     const pickupY =
       drop.y;
 
-    const dropId =
-      drop.id;
 
     pickupInProgress =
       true;
@@ -297,7 +337,8 @@ export function createGunDropSystem({
       /*
        * Firebase transaction is authoritative.
        *
-       * Only one browser can successfully claim this drop.
+       * If two students hit the same dropped gun, exactly
+       * one transaction can win.
        */
       const claimed =
         await claimGunDrop(
@@ -308,11 +349,19 @@ export function createGunDropSystem({
         return;
       }
 
+
       /*
-       * IMPORTANT:
+       * CRITICAL RACE FIX
        *
-       * confirmPickup() must award the gun even if Firebase
-       * synchronization has already removed the local drop.
+       * The Firebase listener may already have removed this
+       * drop from weaponSystem.drops.
+       *
+       * A successful Firebase claim is nevertheless proof
+       * that THIS player owns the gun.
+       *
+       * weaponSystem.confirmPickup() therefore must award the
+       * gun without requiring the local drop object to still
+       * exist.
        */
       const pickup =
         weaponSystem.confirmPickup(
@@ -321,12 +370,13 @@ export function createGunDropSystem({
 
       if (!pickup) {
         console.error(
-          'Firebase confirmed gun ownership but weaponSystem failed to award it:',
+          'Firebase awarded gun ownership but weaponSystem failed to increment the gun count:',
           dropId
         );
 
         return;
       }
+
 
       addExplosion(
         pickupX,
@@ -336,6 +386,11 @@ export function createGunDropSystem({
         2
       );
 
+
+      /*
+       * Immediately publish the new gun count so other
+       * browsers see the player's correct weapon state.
+       */
       publishPlayerState(
         true
       );
@@ -372,16 +427,18 @@ export function createGunDropSystem({
       ) => {
         if (
           now <
-          drop.expiresAt
+          Number(
+            drop.expiresAt
+          )
         ) {
           return;
         }
 
         /*
-         * Cleanup is intentionally fire-and-forget.
+         * Cleanup is intentionally asynchronous.
          *
-         * Firebase is authoritative and the next listener
-         * update reconciles local state.
+         * The Firebase listener remains authoritative and
+         * will reconcile weaponSystem when removal completes.
          */
         removeExpiredGunDrop(
           id
@@ -414,11 +471,25 @@ export function createGunDropSystem({
     cleanupExpiredDrops();
 
     /*
-     * Do not await this in the frame loop.
+     * Never await a Firebase transaction inside the game
+     * frame loop.
      *
-     * pickupInProgress prevents overlapping claims.
+     * pickupInProgress prevents overlapping claims while the
+     * asynchronous transaction is running.
      */
-    checkGunPickup();
+    checkGunPickup().catch(
+      (error) => {
+        /*
+         * checkGunPickup already handles normal transaction
+         * failures. This protects the frame loop from an
+         * unexpected rejected promise.
+         */
+        console.error(
+          'Unexpected gun pickup error:',
+          error
+        );
+      }
+    );
   }
 
 
