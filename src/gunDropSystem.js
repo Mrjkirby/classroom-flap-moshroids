@@ -37,7 +37,8 @@ export function createGunDropSystem({
   world,
   isMultiplayerJoined,
   addExplosion,
-  publishPlayerState
+  publishPlayerState,
+  onGunCap = null
 }) {
   if (!world) {
     throw new Error(
@@ -391,9 +392,10 @@ export function createGunDropSystem({
        * Immediately publish the new gun count so other
        * browsers see the player's correct weapon state.
        */
-      publishPlayerState(
+      const publication = publishPlayerState(
         true
       );
+      if (pickup.bossReady && onGunCap && await publication) await onGunCap();
     } catch (error) {
       console.error(
         'Gun pickup failed:',

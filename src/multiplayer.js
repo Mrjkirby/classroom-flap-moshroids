@@ -59,6 +59,8 @@ import {
   startGunDropListener,
   stopGunDropListener
 } from './gunDropMultiplayer.js';
+import { ROOM_PATH, IS_ONE_VS_WORLD } from './gameMode.js';
+import { configureGauntletNetwork, startGauntletListener, stopGauntletListener } from './gauntlet/network.js';
 
 import {
   configureAsteroidNetwork,
@@ -125,11 +127,8 @@ onValue(ref(database, '.info/serverTimeOffset'), (snapshot) => {
    ROOM
    ========================================================= */
 
-const ROOM_ID =
-  'classroom';
-
 const roomPath =
-  `moshroids/rooms/${ROOM_ID}`;
+  ROOM_PATH;
 
 const playersPath =
   `${roomPath}/players`;
@@ -187,6 +186,8 @@ configureAsteroidNetwork({
     () =>
       currentUser
 });
+
+if (IS_ONE_VS_WORLD) configureGauntletNetwork({ currentUser: () => currentUser });
 
 
 /* =========================================================
@@ -702,33 +703,16 @@ async function publishLocalState(
         name:
           pilotName,
 
-        x:
-          Number(
-            state.x
-          ) ||
-          0,
-
-        y:
-          Number(
-            state.y
-          ) ||
-          0,
+        ...(state.perimeterLocked ? {} : {
+          x: Number(state.x) || 0,
+          y: Number(state.y) || 0,
+          velocityX: Number(state.velocityX) || 0,
+          velocityY: Number(state.velocityY) || 0
+        }),
 
         angle:
           Number(
             state.angle
-          ) ||
-          0,
-
-        velocityX:
-          Number(
-            state.velocityX
-          ) ||
-          0,
-
-        velocityY:
-          Number(
-            state.velocityY
           ) ||
           0,
 
@@ -962,6 +946,7 @@ async function joinMultiplayer(
      */
     startGunDropListener();
     startAsteroidListener();
+    if (IS_ONE_VS_WORLD) await startGauntletListener();
 
     setNetworkStatus(
       true
@@ -1108,6 +1093,7 @@ async function leaveMultiplayer() {
    */
   stopGunDropListener();
   stopAsteroidListener();
+  if (IS_ONE_VS_WORLD) stopGauntletListener();
 
   if (playerRef) {
     try {

@@ -64,6 +64,7 @@ export class Ship {
      */
     this.remote =
       false;
+    this.perimeterLocked = false;
   }
 
 
@@ -140,11 +141,17 @@ export class Ship {
     this.thrusting =
       thrust !== 0;
 
+    if (this.perimeterLocked) {
+      this.thrusting = false;
+      this.velocityX = 0;
+      this.velocityY = 0;
+    }
+
     this.velocityX +=
       Math.cos(
         this.angle
       ) *
-      thrust *
+      (this.perimeterLocked ? 0 : thrust) *
       0.25 *
       frameScale;
 
@@ -152,7 +159,7 @@ export class Ship {
       Math.sin(
         this.angle
       ) *
-      thrust *
+      (this.perimeterLocked ? 0 : thrust) *
       0.25 *
       frameScale;
 

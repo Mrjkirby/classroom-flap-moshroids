@@ -13,6 +13,8 @@ import { weaponSystem } from './weaponSystem.js';
 import { sharedClock } from './sharedClock.js';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './worldConfig.js';
 import { destroySharedAsteroid, getDestroyedAsteroids } from './asteroidNetwork.js';
+import { createGauntletDirector } from './gauntlet/director.js';
+import { IS_ONE_VS_WORLD } from './gameMode.js';
 
 import {
   drawWrapped,
@@ -22,6 +24,7 @@ import {
 
 import {
   bindPilotLogin,
+  getLocalIdentity,
   getRemotePlayers,
   publishLocalState,
   updateRemotePlayers
@@ -79,6 +82,7 @@ const world = {
   ships: [],
   bullets: [],
   asteroids: [],
+  gauntletProjectiles: [],
   missiles: [],
   particles: [],
 
@@ -90,6 +94,13 @@ const world = {
   }
 };
 
+const gauntlet = createGauntletDirector({
+  world, weaponSystem,
+  getWorldWidth: () => worldWidth,
+  getWorldHeight: () => worldHeight,
+  isJoined: () => multiplayerJoined,
+  getRemotePlayers, getLocalIdentity, publishPlayerState, addExplosion
+});
 
 const controls = {
   A: {
@@ -113,8 +124,10 @@ const spelling =
         '#wormholeOverlay'
       ),
 
-    onComplete:
-      respawnPlayer
+    onComplete: (playerId) => {
+      respawnPlayer(playerId);
+      gauntlet.onSpellingComplete();
+    }
   });
 
 
@@ -429,27 +442,27 @@ function playerDestroyed(
 
   if (
     !ship ||
+    gauntlet.isPerimeterShip(ship) ||
     !ship.destroy()
   ) {
     return false;
   }
 
-  gunDropSystem
-    .dropLocalGuns(
-      ship
-    )
-    .catch(
-      (error) => {
-        console.error(
-          'Gun drop failed:',
-          error
-        );
-      }
-    );
+  if (gauntlet.active()) {
+    // The 1VW round resets after spelling; do not seed the next race
+    // with the Survivor's forty guns.
+    weaponSystem.setGunCount(1);
+  } else {
+    gunDropSystem
+      .dropLocalGuns(ship)
+      .catch(error => { console.error('Gun drop failed:', error); });
+  }
 
   suspendPlayerControls(
     playerId
   );
+
+  gauntlet.onDeath();
 
   spelling.begin({
     playerId,
@@ -638,7 +651,7 @@ function publishPlayerState(
   force = false
 ) {
   if (!multiplayerJoined) {
-    return;
+    return false;
   }
 
   const ship =
@@ -648,10 +661,10 @@ function publishPlayerState(
     );
 
   if (!ship) {
-    return;
+    return false;
   }
 
-  publishLocalState(
+  return publishLocalState(
     {
       x:
         ship.x,
@@ -675,7 +688,9 @@ function publishPlayerState(
         world.scores.A,
 
       guns:
-        weaponSystem.getGunCount()
+        weaponSystem.getGunCount(),
+
+      perimeterLocked: gauntlet.isPerimeterShip(ship)
     },
 
     force
@@ -690,6 +705,8 @@ function publishPlayerState(
 function fireWeapons(
   ship
 ) {
+  if (gauntlet.fire(ship)) return;
+
   const emitters =
     weaponSystem.getEmitters(
       ship
@@ -734,7 +751,8 @@ const gunDropSystem =
 
     addExplosion,
 
-    publishPlayerState
+    publishPlayerState,
+    onGunCap: IS_ONE_VS_WORLD ? gauntlet.claimSurvivor : null
   });
 
 
@@ -757,8 +775,12 @@ const collisionSystem =
     destroyAsteroid:
       asteroidMultiplayer.destroy,
 
+    getProjectileAsteroids: () => world.gauntletProjectiles,
+    destroyProjectile: gauntlet.destroyProjectile,
+    isPerimeterShip: gauntlet.isPerimeterShip,
+
     isAsteroidDestructionPending:
-      asteroidMultiplayer.isPending,
+      id => asteroidMultiplayer.isPending(id) || gauntlet.isProjectilePending(id),
 
     playerDestroyed,
 
@@ -790,6 +812,7 @@ function reset() {
   ];
 
   world.bullets = [];
+  gauntlet.clear();
   world.missiles = [];
   world.particles = [];
 
@@ -851,7 +874,8 @@ function updateShips(
       if (
         safeZones &&
         ship.visible &&
-        !ship.remote
+        !ship.remote &&
+        !gauntlet.isPerimeterShip(ship)
       ) {
         safeZones.blockShip(
           ship
@@ -936,20 +960,24 @@ function updateAsteroids(now) {
   updateAsteroidRespawn(now);
 
   world.asteroids.forEach(
-    (asteroid) =>
+    (asteroid) => {
       asteroid.update(
         now,
         worldWidth,
         worldHeight
-      )
+      );
+      gauntlet.positionAsteroid(asteroid, now);
+    }
   );
+
+  gauntlet.updateProjectiles(now);
 
   if (!safeZones) {
     return;
   }
 
   const safeZoneHits =
-    world.asteroids.filter(
+    [...world.asteroids, ...world.gauntletProjectiles].filter(
       (asteroid) =>
         safeZones.hitsAsteroid(
           asteroid
@@ -958,12 +986,12 @@ function updateAsteroids(now) {
 
   safeZoneHits.forEach(
     (asteroid) => {
-      asteroidMultiplayer
-        .destroy(
+      Promise.resolve(
+        (asteroid.cannonShot ? gauntlet.destroyProjectile : asteroidMultiplayer.destroy)(
           asteroid,
           '#f1f0ea'
         )
-        .catch(
+      ).catch(
           (error) => {
             console.error(
               'Safe-zone asteroid destruction failed:',
@@ -974,7 +1002,6 @@ function updateAsteroids(now) {
     }
   );
 }
-
 
 /* =========================================================
    UPDATE — MR. K
@@ -1117,6 +1144,8 @@ function update(dt, sharedNow) {
     dt
   );
 
+  gauntlet.update(sharedNow);
+
   asteroidMultiplayer.sync();
 
   gunDropSystem.update();
@@ -1236,6 +1265,8 @@ function drawWorld() {
         worldHeight
       )
   );
+
+  world.gauntletProjectiles.forEach(asteroid => asteroid.draw(ctx, worldWidth, worldHeight));
 
   if (world.mrK) {
     world.mrK.draw(

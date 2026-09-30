@@ -180,6 +180,9 @@ export function createCollisionSystem({
 
   destroyAsteroid,
   isAsteroidDestructionPending,
+  getProjectileAsteroids = () => [],
+  destroyProjectile = () => false,
+  isPerimeterShip = () => false,
 
   playerDestroyed,
 
@@ -341,6 +344,11 @@ export function createCollisionSystem({
     );
   }
 
+  function collidableAsteroids() {
+    const projectiles = getProjectileAsteroids();
+    return projectiles.length ? [...world.asteroids, ...projectiles] : world.asteroids;
+  }
+
 
   /* =======================================================
      BULLET → MISSILE / ASTEROID
@@ -405,7 +413,7 @@ export function createCollisionSystem({
          --------------------------------------------------- */
 
       const asteroidIndex =
-        world.asteroids.findIndex(
+        collidableAsteroids().findIndex(
           (asteroid) =>
             !isAsteroidDestructionPending(
               asteroid.id
@@ -423,10 +431,7 @@ export function createCollisionSystem({
         continue;
       }
 
-      const asteroid =
-        world.asteroids[
-          asteroidIndex
-        ];
+      const asteroid = collidableAsteroids()[asteroidIndex];
 
       world.bullets.splice(
         bulletIndex,
@@ -446,7 +451,7 @@ export function createCollisionSystem({
        * authoritative destruction ownership.
        */
       Promise.resolve(
-        destroyAsteroid(
+        (asteroid.cannonShot ? destroyProjectile : destroyAsteroid)(
           asteroid,
 
           bullet.owner === 'A'
@@ -617,6 +622,7 @@ export function createCollisionSystem({
             ship.owner !==
               bullet.owner &&
             ship.visible &&
+            !isPerimeterShip(ship) &&
             projectileHit(
               bullet,
               ship
@@ -685,7 +691,7 @@ export function createCollisionSystem({
       const rockHit =
         !missile.outbound &&
         (
-          world.asteroids.some(
+          collidableAsteroids().some(
             (asteroid) =>
               circleHit(
                 missile,
@@ -730,6 +736,7 @@ export function createCollisionSystem({
             ship.owner ===
               'A' &&
             ship.visible &&
+            !isPerimeterShip(ship) &&
             circleHit(
               missile,
               ship
@@ -778,7 +785,8 @@ export function createCollisionSystem({
       !localShip ||
       !localShip.visible ||
       localShip.state !==
-        'ACTIVE'
+        'ACTIVE' ||
+      isPerimeterShip(localShip)
     ) {
       return;
     }
@@ -792,7 +800,7 @@ export function createCollisionSystem({
        --------------------------------------------------- */
 
     const asteroid =
-      world.asteroids.find(
+      collidableAsteroids().find(
         (candidate) =>
           circleHit(
             localShip,

@@ -42,17 +42,12 @@ import {
   runTransaction
 } from 'https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js';
 import { sharedClock } from './sharedClock.js';
+import { ROOM_PATH } from './gameMode.js';
 
 
 /* =========================================================
    ROOM
    ========================================================= */
-
-const ROOM_ID =
-  'classroom';
-
-const ROOM_PATH =
-  `moshroids/rooms/${ROOM_ID}`;
 
 const DESTROYED_ASTEROIDS_PATH =
   `${ROOM_PATH}/destroyedAsteroids`;
