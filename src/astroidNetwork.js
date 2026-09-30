@@ -1,21 +1,37 @@
 /*
  * MOSHROIDS — SHARED ASTEROID NETWORK
  *
- * Firebase responsibilities:
- * - listen for authoritative asteroid destruction records
- * - atomically claim asteroid destruction
- * - expose destruction history
- * - clear destruction history for a completely new round
+ * Firebase transport for ordinary asteroid destruction.
  *
- * This module does NOT:
- * - own world.asteroids
- * - move asteroids
- * - create asteroids
- * - award points
- * - create explosions
+ * Owns:
+ * - authoritative asteroid-destruction listener
+ * - atomic destruction claims
+ * - local cache of shared destruction records
+ * - room-wide destruction-history clearing
+ * - listener cleanup
  *
- * asteroidMultiplayer.js coordinates this network layer
- * with the local game world.
+ * Does NOT own:
+ * - world.asteroids
+ * - asteroid construction
+ * - asteroid movement
+ * - asteroid difficulty
+ * - asteroid respawn
+ * - collisions
+ * - scoring
+ * - explosions
+ *
+ * Flow:
+ *
+ * asteroidMultiplayer.js
+ *          ↓
+ * asteroidNetwork.js
+ *          ↓
+ *       Firebase
+ *
+ * Authentication remains owned by multiplayer.js.
+ * multiplayer.js injects a current-user getter here so this
+ * module does not need to import multiplayer.js and create a
+ * circular dependency.
  */
 
 import {
@@ -51,12 +67,17 @@ let destroyedAsteroids =
 let unsubscribeDestroyedAsteroids =
   null;
 
+
 /*
- * Authentication remains owned by multiplayer.js.
+ * Authentication is owned by multiplayer.js.
  *
- * We inject a getter rather than importing multiplayer.js,
- * avoiding a circular dependency.
+ * multiplayer.js configures this after Firebase initialization:
+ *
+ * configureAsteroidNetwork({
+ *   currentUser: () => currentUser
+ * });
  */
+
 let getCurrentUser =
   () => null;
 
@@ -83,24 +104,52 @@ export function configureAsteroidNetwork({
 
 
 /* =========================================================
-   LISTENER
+   DATABASE
+   ========================================================= */
+
+/*
+ * multiplayer.js initializes the default Firebase application
+ * before these functions are called.
+ *
+ * Therefore getDatabase() resolves that initialized default
+ * application without importing multiplayer.js.
+ */
+
+function getRoomDatabase() {
+  return getDatabase();
+}
+
+
+/* =========================================================
+   SHARED DESTRUCTION LISTENER
    ========================================================= */
 
 export function startAsteroidListener() {
+  /*
+   * Never leave two listeners attached if multiplayer is
+   * rejoined in the same browser session.
+   */
+
   if (
     unsubscribeDestroyedAsteroids
   ) {
     unsubscribeDestroyedAsteroids();
+
+    unsubscribeDestroyedAsteroids =
+      null;
   }
 
+
   const database =
-    getDatabase();
+    getRoomDatabase();
+
 
   const asteroidRef =
     ref(
       database,
       DESTROYED_ASTEROIDS_PATH
     );
+
 
   unsubscribeDestroyedAsteroids =
     onValue(
@@ -111,8 +160,10 @@ export function startAsteroidListener() {
           snapshot.val() ||
           {};
 
+
         const nextDestroyed =
           new Map();
+
 
         Object.entries(
           data
@@ -123,14 +174,24 @@ export function startAsteroidListener() {
               destruction
             ]
           ) => {
-            if (!destruction) {
+            if (
+              !asteroidId ||
+              !destruction
+            ) {
               return;
             }
 
+
             nextDestroyed.set(
-              asteroidId,
+              String(
+                asteroidId
+              ),
+
               {
-                asteroidId,
+                asteroidId:
+                  String(
+                    asteroidId
+                  ),
 
                 destroyedBy:
                   String(
@@ -148,6 +209,7 @@ export function startAsteroidListener() {
           }
         );
 
+
         destroyedAsteroids =
           nextDestroyed;
       },
@@ -163,14 +225,39 @@ export function startAsteroidListener() {
 
 
 /* =========================================================
-   DESTROY ASTEROID
+   AUTHORITATIVE DESTRUCTION CLAIM
    ========================================================= */
+
+/*
+ * Attempts to create exactly one destruction record for the
+ * supplied asteroid ID.
+ *
+ * Firebase transaction semantics make the operation atomic.
+ *
+ * If two browsers shoot the same asteroid:
+ *
+ * Browser A ─┐
+ *            ├── Firebase transaction
+ * Browser B ─┘
+ *
+ * only one browser can create the record.
+ *
+ * Returns:
+ *
+ * true
+ *   This browser created the authoritative destruction record.
+ *
+ * false
+ *   The asteroid was already destroyed, authentication was
+ *   unavailable, the ID was invalid, or Firebase failed.
+ */
 
 export async function destroySharedAsteroid(
   asteroidId
 ) {
   const currentUser =
     getCurrentUser();
+
 
   if (
     !currentUser ||
@@ -179,14 +266,24 @@ export async function destroySharedAsteroid(
     return false;
   }
 
+
+  const normalizedId =
+    String(
+      asteroidId
+    );
+
+
   const database =
-    getDatabase();
+    getRoomDatabase();
+
 
   const asteroidRef =
     ref(
       database,
-      `${DESTROYED_ASTEROIDS_PATH}/${asteroidId}`
+
+      `${DESTROYED_ASTEROIDS_PATH}/${normalizedId}`
     );
+
 
   try {
     const result =
@@ -195,12 +292,19 @@ export async function destroySharedAsteroid(
 
         (current) => {
           /*
-           * Another browser already won destruction
-           * ownership.
+           * Existing value means another browser has already
+           * established authoritative destruction ownership.
            */
+
           if (current) {
             return undefined;
           }
+
+
+          /*
+           * Preserve the exact shared record structure used
+           * by the original multiplayer implementation.
+           */
 
           return {
             destroyedBy:
@@ -212,12 +316,22 @@ export async function destroySharedAsteroid(
         },
 
         {
+          /*
+           * Do not temporarily pretend locally that this
+           * browser won before Firebase resolves the race.
+           */
+
           applyLocally:
             false
         }
       );
 
-    return result.committed;
+
+    return (
+      result.committed ===
+      true
+    );
+
   } catch (error) {
     console.error(
       'Moshroids asteroid destruction failed:',
@@ -230,12 +344,17 @@ export async function destroySharedAsteroid(
 
 
 /* =========================================================
-   QUERY
+   SHARED STATE QUERY
    ========================================================= */
 
 export function isAsteroidDestroyed(
   asteroidId
 ) {
+  if (!asteroidId) {
+    return false;
+  }
+
+
   return destroyedAsteroids.has(
     String(
       asteroidId
@@ -250,19 +369,40 @@ export function getDestroyedAsteroids() {
 
 
 /* =========================================================
-   RESET SHARED HISTORY
+   ROOM-WIDE DESTRUCTION RESET
    ========================================================= */
+
+/*
+ * Clears the entire room's authoritative asteroid-destruction
+ * history.
+ *
+ * IMPORTANT:
+ *
+ * This is NOT a normal asteroid respawn operation.
+ *
+ * Do not call this when:
+ * - one asteroid respawns
+ * - MR. K respawns
+ * - a local player respawns
+ * - a browser joins
+ *
+ * It is intended only when the entire shared room needs a
+ * genuinely fresh destruction history.
+ */
 
 export async function clearDestroyedAsteroids() {
   const currentUser =
     getCurrentUser();
 
+
   if (!currentUser) {
     return false;
   }
 
+
   const database =
-    getDatabase();
+    getRoomDatabase();
+
 
   try {
     await remove(
@@ -272,7 +412,18 @@ export async function clearDestroyedAsteroids() {
       )
     );
 
+
+    /*
+     * The Firebase listener should also receive the removal,
+     * but clearing immediately avoids retaining stale local
+     * state while that event propagates.
+     */
+
+    destroyedAsteroids.clear();
+
+
     return true;
+
   } catch (error) {
     console.error(
       'Moshroids asteroid reset failed:',
@@ -293,9 +444,11 @@ export function stopAsteroidListener() {
     unsubscribeDestroyedAsteroids
   ) {
     unsubscribeDestroyedAsteroids();
+
     unsubscribeDestroyedAsteroids =
       null;
   }
+
 
   destroyedAsteroids.clear();
 }
