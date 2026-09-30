@@ -1,93 +1,137 @@
 import { Asteroid } from './asteroid.js';
 
+
 /*
- * MOSHROIDS ASTEROID FIELD / DIFFICULTY DIRECTOR
+ * MOSHROIDS — ASTEROID FIELD / DIFFICULTY DIRECTOR
  *
- * RESPONSIBILITY
- *
- * Asteroid:
- * - owns one asteroid's movement, geometry and drawing.
- *
- * AsteroidDirector:
- * - owns synchronized field timing
+ * Owns:
+ * - synchronized asteroid-field timing
  * - difficulty tiers
  * - asteroid caps
- * - respawn timing
+ * - replacement timing
  * - field generations
  * - deterministic asteroid identities
  * - deterministic asteroid spawn positions
- * - creation of complete asteroid fields
- * - creation of normal replacement asteroids
+ * - complete asteroid-field creation
+ * - normal replacement asteroid creation
  * - MR. K difficulty advancement
  *
- * game.js:
- * - owns the world
- * - owns multiplayer destruction synchronization
- * - owns collisions, scoring and effects
+ * Does NOT own:
+ * - world.asteroids
+ * - asteroid movement
+ * - collisions
+ * - scoring
+ * - explosions
+ * - Firebase
+ * - multiplayer asteroid destruction
  *
- * SHARED CLOCK DESIGN
+ * Related modules:
  *
- * All browsers derive asteroid timing from Date.now().
- * No Firebase clock synchronization is required.
+ * asteroid.js
+ *   Owns one asteroid entity.
  *
- * A new synchronized field begins every 30 minutes:
+ * asteroidMultiplayer.js
+ *   Coordinates local/shared asteroid destruction.
  *
- * :00 and :30
+ * asteroidNetwork.js
+ *   Owns Firebase asteroid-destruction records.
  *
- * The first 15 seconds of each 30-minute epoch are a JOIN WINDOW.
+ * collisionSystem.js
+ *   Owns asteroid collision resolution.
  *
- * Difficulty:
- *
- * Tier 1: cap 10 — one replacement every 60 seconds
- * Tier 2: cap 20 — one replacement every 50 seconds
- * Tier 3: cap 30 — one replacement every 40 seconds
- * Tier 4: cap 40 — one replacement every 30 seconds
- * Tier 5: cap 50 — one replacement every 20 seconds
- * Tier 6: cap 60 — one replacement every 10 seconds
- *
- * Difficulty advances every 10 minutes of the synchronized epoch.
- *
- * Destroying MR. K immediately advances one tier and requests
- * a complete asteroid-field reset at the new cap.
+ * game.js
+ *   Owns the world and orchestrates these systems.
  */
 
-const TIER_DURATION = 10 * 60;
 
-const EPOCH_DURATION = 30 * 60;
-const JOIN_WINDOW = 15;
+/* =========================================================
+   DIFFICULTY CONFIGURATION
+   ========================================================= */
 
-const SPAWN_MARGIN = 70;
+const TIER_DURATION =
+  10 * 60;
+
+const EPOCH_DURATION =
+  30 * 60;
+
+const JOIN_WINDOW =
+  15;
+
+const SPAWN_MARGIN =
+  70;
+
 
 const TIERS = [
-  { cap: 10, respawnSeconds: 60 },
-  { cap: 20, respawnSeconds: 50 },
-  { cap: 30, respawnSeconds: 40 },
-  { cap: 40, respawnSeconds: 30 },
-  { cap: 50, respawnSeconds: 20 },
-  { cap: 60, respawnSeconds: 10 }
+  {
+    cap: 10,
+    respawnSeconds: 60
+  },
+
+  {
+    cap: 20,
+    respawnSeconds: 50
+  },
+
+  {
+    cap: 30,
+    respawnSeconds: 40
+  },
+
+  {
+    cap: 40,
+    respawnSeconds: 30
+  },
+
+  {
+    cap: 50,
+    respawnSeconds: 20
+  },
+
+  {
+    cap: 60,
+    respawnSeconds: 10
+  }
 ];
 
 
+/* =========================================================
+   DETERMINISTIC RANDOM
+   ========================================================= */
+
 /*
- * Small deterministic random helper used ONLY for field placement.
+ * Used only for deterministic field placement.
  *
- * Asteroid.js independently uses its seed for deterministic:
+ * asteroid.js independently uses the asteroid seed for:
  * - velocity
  * - rotation
  * - rock geometry
  *
- * Using the same asteroid seed here means every browser places
- * a given asteroid at the same starting location.
+ * Given the same seed and world dimensions, every browser
+ * therefore creates the same asteroid in the same location.
  */
-function seededRandom(seed) {
+
+function seededRandom(
+  seed
+) {
   const value =
-    Math.sin(seed * 9999.91) *
+    Math.sin(
+      seed *
+      9999.91
+    ) *
     43758.5453;
 
-  return value -
-    Math.floor(value);
+  return (
+    value -
+    Math.floor(
+      value
+    )
+  );
 }
 
+
+/* =========================================================
+   ASTEROID DIRECTOR
+   ========================================================= */
 
 export class AsteroidDirector {
   constructor() {
@@ -95,43 +139,64 @@ export class AsteroidDirector {
   }
 
 
-  /* =========================================================
+  /* =======================================================
      RESET
-     ========================================================= */
+     ======================================================= */
 
   /*
-   * Date.now() is deliberately used instead of performance.now().
+   * Date.now() is deliberate.
    *
    * performance.now() begins independently in every browser.
-   * Date.now() lets separate browsers calculate the same epoch.
+   * Date.now() lets all browsers derive the same 30-minute
+   * epoch from wall-clock time.
    */
-  reset(now = Date.now()) {
-    this.mrKAdvances = 0;
-    this.fieldGeneration = 0;
-    this.nextAsteroidId = 1;
+
+  reset(
+    now = Date.now()
+  ) {
+    this.mrKAdvances =
+      0;
+
+    this.fieldGeneration =
+      0;
+
+    this.nextAsteroidId =
+      1;
 
     this.currentEpoch =
-      this.getEpochNumber(now);
+      this.getEpochNumber(
+        now
+      );
 
-    this.lastRespawnSlot = -1;
+    this.lastRespawnSlot =
+      -1;
   }
 
 
-  /* =========================================================
-     SHARED 30-MINUTE EPOCH
-     ========================================================= */
+  /* =======================================================
+     SYNCHRONIZED 30-MINUTE EPOCH
+     ======================================================= */
 
-  getEpochNumber(now = Date.now()) {
+  getEpochNumber(
+    now = Date.now()
+  ) {
     return Math.floor(
       now /
-      (EPOCH_DURATION * 1000)
+      (
+        EPOCH_DURATION *
+        1000
+      )
     );
   }
 
 
-  getEpochStart(now = Date.now()) {
+  getEpochStart(
+    now = Date.now()
+  ) {
     const epoch =
-      this.getEpochNumber(now);
+      this.getEpochNumber(
+        now
+      );
 
     return (
       epoch *
@@ -141,52 +206,77 @@ export class AsteroidDirector {
   }
 
 
-  getEpochElapsedSeconds(now = Date.now()) {
+  getEpochElapsedSeconds(
+    now = Date.now()
+  ) {
     return Math.max(
       0,
+
       (
         now -
-        this.getEpochStart(now)
-      ) / 1000
+        this.getEpochStart(
+          now
+        )
+      ) /
+      1000
     );
   }
 
 
   /*
-   * TRUE during the first 15 seconds of every
-   * synchronized 30-minute epoch.
+   * First 15 seconds of each synchronized epoch.
    */
-  isJoinWindow(now = Date.now()) {
+
+  isJoinWindow(
+    now = Date.now()
+  ) {
     return (
-      this.getEpochElapsedSeconds(now) <
+      this.getEpochElapsedSeconds(
+        now
+      ) <
       JOIN_WINDOW
     );
   }
 
 
-  getJoinCountdown(now = Date.now()) {
-    if (!this.isJoinWindow(now)) {
+  getJoinCountdown(
+    now = Date.now()
+  ) {
+    if (
+      !this.isJoinWindow(
+        now
+      )
+    ) {
       return 0;
     }
 
     return Math.max(
       0,
+
       Math.ceil(
         JOIN_WINDOW -
-        this.getEpochElapsedSeconds(now)
+        this.getEpochElapsedSeconds(
+          now
+        )
       )
     );
   }
 
 
   /*
-   * Detect a new :00 / :30 synchronized epoch.
+   * Detects crossing into a new synchronized :00 / :30
+   * epoch.
    *
-   * game.js can use this signal to rebuild the asteroid field.
+   * game.js uses TRUE to replace the local asteroid field.
    */
-  checkEpochChange(now = Date.now()) {
+
+  checkEpochChange(
+    now = Date.now()
+  ) {
     const epoch =
-      this.getEpochNumber(now);
+      this.getEpochNumber(
+        now
+      );
 
     if (
       epoch ===
@@ -195,27 +285,40 @@ export class AsteroidDirector {
       return false;
     }
 
-    this.currentEpoch = epoch;
+    this.currentEpoch =
+      epoch;
 
-    this.mrKAdvances = 0;
-    this.fieldGeneration = 0;
-    this.nextAsteroidId = 1;
-    this.lastRespawnSlot = -1;
+    this.mrKAdvances =
+      0;
+
+    this.fieldGeneration =
+      0;
+
+    this.nextAsteroidId =
+      1;
+
+    this.lastRespawnSlot =
+      -1;
 
     return true;
   }
 
 
-  /* =========================================================
+  /* =======================================================
      DIFFICULTY
-     ========================================================= */
+     ======================================================= */
 
-  getTimeTier(now = Date.now()) {
+  getTimeTier(
+    now = Date.now()
+  ) {
     const elapsed =
-      this.getEpochElapsedSeconds(now);
+      this.getEpochElapsedSeconds(
+        now
+      );
 
     return Math.min(
       TIERS.length - 1,
+
       Math.floor(
         elapsed /
         TIER_DURATION
@@ -224,45 +327,68 @@ export class AsteroidDirector {
   }
 
 
-  getTierIndex(now = Date.now()) {
+  getTierIndex(
+    now = Date.now()
+  ) {
     return Math.min(
       TIERS.length - 1,
+
       Math.max(
-        this.getTimeTier(now),
+        this.getTimeTier(
+          now
+        ),
+
         this.mrKAdvances
       )
     );
   }
 
 
-  getTier(now = Date.now()) {
+  getTier(
+    now = Date.now()
+  ) {
     return TIERS[
-      this.getTierIndex(now)
+      this.getTierIndex(
+        now
+      )
     ];
   }
 
 
-  getCap(now = Date.now()) {
-    return this.getTier(now).cap;
+  getCap(
+    now = Date.now()
+  ) {
+    return this.getTier(
+      now
+    ).cap;
   }
 
 
-  getRespawnSeconds(now = Date.now()) {
-    return this.getTier(now)
-      .respawnSeconds;
+  getRespawnSeconds(
+    now = Date.now()
+  ) {
+    return this.getTier(
+      now
+    ).respawnSeconds;
   }
 
 
-  /* =========================================================
+  /* =======================================================
      DETERMINISTIC RESPAWN CLOCK
-     ========================================================= */
+     ======================================================= */
 
-  getRespawnSlot(now = Date.now()) {
+  getRespawnSlot(
+    now = Date.now()
+  ) {
     const interval =
-      this.getRespawnSeconds(now);
+      this.getRespawnSeconds(
+        now
+      );
 
     const elapsed =
-      this.getEpochElapsedSeconds(now);
+      this.getEpochElapsedSeconds(
+        now
+      );
 
     return Math.floor(
       elapsed /
@@ -276,23 +402,36 @@ export class AsteroidDirector {
     now = Date.now()
   ) {
     const cap =
-      this.getCap(now);
+      this.getCap(
+        now
+      );
 
     if (
-      currentAsteroidCount >= cap
+      currentAsteroidCount >=
+      cap
     ) {
       return false;
     }
 
+
     /*
-     * Do not spawn during the synchronization countdown.
+     * No replacement asteroids during the synchronized
+     * join window.
      */
-    if (this.isJoinWindow(now)) {
+
+    if (
+      this.isJoinWindow(
+        now
+      )
+    ) {
       return false;
     }
 
+
     const slot =
-      this.getRespawnSlot(now);
+      this.getRespawnSlot(
+        now
+      );
 
     if (
       slot <=
@@ -301,18 +440,20 @@ export class AsteroidDirector {
       return false;
     }
 
-    this.lastRespawnSlot = slot;
+
+    this.lastRespawnSlot =
+      slot;
 
     return true;
   }
 
 
-  /* =========================================================
+  /* =======================================================
      DETERMINISTIC ASTEROID IDENTITY
-     ========================================================= */
+     ======================================================= */
 
   /*
-   * IDs include:
+   * Identity contains:
    *
    * - synchronized epoch
    * - field generation
@@ -322,6 +463,7 @@ export class AsteroidDirector {
    *
    * epoch-994412-field-0-asteroid-1
    */
+
   createAsteroidIdentity() {
     const number =
       this.nextAsteroidId++;
@@ -335,7 +477,10 @@ export class AsteroidDirector {
 
       seed:
         (
-          (epoch % 100000) *
+          (
+            epoch %
+            100000
+          ) *
           100000
         ) +
         (
@@ -347,24 +492,16 @@ export class AsteroidDirector {
   }
 
 
-  /* =========================================================
+  /* =======================================================
      ASTEROID CREATION
-     ========================================================= */
+     ======================================================= */
 
   /*
-   * Creates ONE ordinary asteroid.
+   * Creates one ordinary asteroid.
    *
-   * Position is deterministic from the asteroid seed.
-   *
-   * Therefore browsers using the same:
-   *
-   * - epoch
-   * - field generation
-   * - asteroid number
-   * - world dimensions
-   *
-   * create the same asteroid in the same starting location.
+   * Spawn position is deterministic from the asteroid seed.
    */
+
   createAsteroid(
     worldWidth,
     worldHeight
@@ -372,46 +509,63 @@ export class AsteroidDirector {
     const identity =
       this.createAsteroidIdentity();
 
+
     /*
-     * Deterministically choose one of four outer edges.
+     * Select one of four outer edges.
      */
+
     const side =
       Math.floor(
         seededRandom(
-          identity.seed + 300
-        ) * 4
+          identity.seed +
+          300
+        ) *
+        4
       );
 
+
     /*
-     * Independent deterministic value used for position
-     * along the selected edge.
+     * Independent deterministic position along that edge.
      */
+
     const edgePosition =
       seededRandom(
-        identity.seed + 400
+        identity.seed +
+        400
       );
+
 
     const horizontalRange =
       Math.max(
         0,
+
         worldWidth -
-        SPAWN_MARGIN * 2
+        SPAWN_MARGIN *
+        2
       );
+
 
     const verticalRange =
       Math.max(
         0,
+
         worldHeight -
-        SPAWN_MARGIN * 2
+        SPAWN_MARGIN *
+        2
       );
+
 
     let x;
     let y;
 
-    if (side === 0) {
+
+    if (
+      side === 0
+    ) {
       /*
        * TOP
        */
+
       x =
         SPAWN_MARGIN +
         edgePosition *
@@ -419,10 +573,14 @@ export class AsteroidDirector {
 
       y =
         SPAWN_MARGIN;
-    } else if (side === 1) {
+
+    } else if (
+      side === 1
+    ) {
       /*
        * RIGHT
        */
+
       x =
         worldWidth -
         SPAWN_MARGIN;
@@ -431,10 +589,14 @@ export class AsteroidDirector {
         SPAWN_MARGIN +
         edgePosition *
         verticalRange;
-    } else if (side === 2) {
+
+    } else if (
+      side === 2
+    ) {
       /*
        * BOTTOM
        */
+
       x =
         SPAWN_MARGIN +
         edgePosition *
@@ -443,10 +605,12 @@ export class AsteroidDirector {
       y =
         worldHeight -
         SPAWN_MARGIN;
+
     } else {
       /*
        * LEFT
        */
+
       x =
         SPAWN_MARGIN;
 
@@ -455,6 +619,7 @@ export class AsteroidDirector {
         edgePosition *
         verticalRange;
     }
+
 
     return new Asteroid(
       x,
@@ -466,18 +631,16 @@ export class AsteroidDirector {
   }
 
 
-  /* =========================================================
+  /* =======================================================
      COMPLETE FIELD CREATION
-     ========================================================= */
+     ======================================================= */
 
   /*
-   * Creates and RETURNS a complete ordinary asteroid field.
+   * Returns a complete ordinary asteroid field.
    *
-   * AsteroidDirector does NOT own world.asteroids.
-   *
-   * game.js remains responsible for assigning the returned field
-   * to its world state.
+   * The director does NOT own world.asteroids.
    */
+
   createField(
     worldWidth,
     worldHeight,
@@ -486,10 +649,16 @@ export class AsteroidDirector {
     const asteroidCount =
       Math.max(
         0,
-        Math.floor(count)
+
+        Math.floor(
+          count
+        )
       );
 
-    const asteroids = [];
+
+    const asteroids =
+      [];
+
 
     for (
       let index = 0;
@@ -504,22 +673,24 @@ export class AsteroidDirector {
       );
     }
 
+
     return asteroids;
   }
 
 
-  /* =========================================================
+  /* =======================================================
      NORMAL FIELD REPLENISHMENT
-     ========================================================= */
+     ======================================================= */
 
   /*
-   * Normal replenishment creates AT MOST ONE asteroid.
+   * Creates at most one replacement asteroid.
    *
    * Returns:
    *
    * Asteroid -> replacement is due
    * null     -> no replacement is due
    */
+
   createRespawn(
     currentAsteroidCount,
     worldWidth,
@@ -535,6 +706,7 @@ export class AsteroidDirector {
       return null;
     }
 
+
     return this.createAsteroid(
       worldWidth,
       worldHeight
@@ -542,20 +714,26 @@ export class AsteroidDirector {
   }
 
 
-  /* =========================================================
-     MR. K
-     ========================================================= */
+  /* =======================================================
+     MR. K DIFFICULTY ADVANCEMENT
+     ======================================================= */
 
   /*
-   * Destroying MR. K advances the CURRENT effective
+   * Destroying MR. K advances the current effective
    * difficulty by one tier.
    *
-   * The returned result tells game.js to perform a complete
-   * ordinary-asteroid field replacement at the new cap.
+   * game.js receives the new cap and replaces the ordinary
+   * asteroid field.
    */
-  mrKDestroyed(now = Date.now()) {
+
+  mrKDestroyed(
+    now = Date.now()
+  ) {
     const before =
-      this.getTierIndex(now);
+      this.getTierIndex(
+        now
+      );
+
 
     const after =
       Math.min(
@@ -563,41 +741,57 @@ export class AsteroidDirector {
         before + 1
       );
 
+
     this.mrKAdvances =
       Math.max(
         this.mrKAdvances,
         after
       );
 
-    /*
-     * A new field generation guarantees that the replacement
-     * field receives fresh asteroid IDs.
-     */
-    this.fieldGeneration += 1;
-    this.nextAsteroidId = 1;
 
     /*
-     * Start replacement timing from the current shared slot.
+     * Fresh generation means fresh deterministic asteroid IDs.
      */
+
+    this.fieldGeneration +=
+      1;
+
+    this.nextAsteroidId =
+      1;
+
+
+    /*
+     * Do not immediately create an extra normal replacement
+     * after the complete field reset.
+     */
+
     this.lastRespawnSlot =
-      this.getRespawnSlot(now);
+      this.getRespawnSlot(
+        now
+      );
+
 
     return {
       advanced:
-        after > before,
+        after >
+        before,
 
       tierIndex:
         after,
 
       tierNumber:
-        after + 1,
+        after +
+        1,
 
       cap:
-        TIERS[after].cap,
+        TIERS[
+          after
+        ].cap,
 
       respawnSeconds:
-        TIERS[after]
-          .respawnSeconds,
+        TIERS[
+          after
+        ].respawnSeconds,
 
       fieldGeneration:
         this.fieldGeneration,
@@ -608,34 +802,50 @@ export class AsteroidDirector {
   }
 
 
-  /* =========================================================
+  /* =======================================================
      STATE
-     ========================================================= */
+     ======================================================= */
 
-  getState(now = Date.now()) {
+  getState(
+    now = Date.now()
+  ) {
     const tierIndex =
-      this.getTierIndex(now);
+      this.getTierIndex(
+        now
+      );
 
     const tier =
-      TIERS[tierIndex];
+      TIERS[
+        tierIndex
+      ];
+
 
     return {
       epoch:
-        this.getEpochNumber(now),
+        this.getEpochNumber(
+          now
+        ),
 
       epochElapsedSeconds:
-        this.getEpochElapsedSeconds(now),
+        this.getEpochElapsedSeconds(
+          now
+        ),
 
       joinWindow:
-        this.isJoinWindow(now),
+        this.isJoinWindow(
+          now
+        ),
 
       joinCountdown:
-        this.getJoinCountdown(now),
+        this.getJoinCountdown(
+          now
+        ),
 
       tierIndex,
 
       tierNumber:
-        tierIndex + 1,
+        tierIndex +
+        1,
 
       cap:
         tier.cap,
@@ -650,9 +860,17 @@ export class AsteroidDirector {
 }
 
 
+/* =========================================================
+   SHARED DIRECTOR INSTANCE
+   ========================================================= */
+
 export const asteroidDirector =
   new AsteroidDirector();
 
+
+/* =========================================================
+   CONSTANT EXPORTS
+   ========================================================= */
 
 export {
   TIERS,
