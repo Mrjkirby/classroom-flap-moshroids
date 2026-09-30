@@ -1,4 +1,4 @@
-import { asteroidDirector } from './asteroidDirector.js';
+import { asteroidDirector, BASE_ASTEROID_COUNT } from './asteroidDirector.js';
 import { createAsteroidMultiplayerSystem } from './asteroidMultiplayer.js';
 import { Bullet } from './bullet.js';
 import { Camera } from './camera.js';
@@ -808,7 +808,7 @@ function reset() {
   lastFieldSlot = -1;
 
   replaceAsteroidField(
-    10
+    BASE_ASTEROID_COUNT
   );
 
   spawnMrK();

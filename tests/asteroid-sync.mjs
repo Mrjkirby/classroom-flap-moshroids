@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { Asteroid } from '../src/asteroid.js';
-import { AsteroidDirector, EPOCH_DURATION } from '../src/asteroidDirector.js';
+import { AsteroidDirector, BASE_ASTEROID_COUNT, EPOCH_DURATION } from '../src/asteroidDirector.js';
 import { sharedClock } from '../src/sharedClock.js';
 import { WORLD_WIDTH, WORLD_HEIGHT } from '../src/worldConfig.js';
 
@@ -121,6 +121,30 @@ test('a shared MR. K event advances the generation and resets the field', () => 
   assert.ok(fields[0].every(a => a.id.includes('-field-1-')));
   assert.ok(fields[0].every(a => a.spawnTimestamp === epoch + 90000));
   sameField(fields[0], fields[1], epoch + 100000);
+});
+
+test('shared MR. K records double the base count through 2x, 4x, 8x, and 16x', () => {
+  const directors = [new AsteroidDirector(), new AsteroidDirector()];
+  const records = new Map();
+  const at = epoch + 500000;
+  assert.equal(directors[0].reconstructField(WORLD_WIDTH, WORLD_HEIGHT, at, records).length, BASE_ASTEROID_COUNT);
+
+  for (let count = 1; count <= 4; count += 1) {
+    const id = `epoch-${epoch / (EPOCH_DURATION * 1000)}-mrk-${count - 1}`;
+    records.set(id, { destroyedAt: epoch + count * 90000 });
+    const fields = directors.map(director => director.reconstructField(WORLD_WIDTH, WORLD_HEIGHT, at, records));
+    assert.equal(fields[0].length, BASE_ASTEROID_COUNT * (2 ** count));
+    assert.equal(directors[0].fieldGeneration, count);
+    assert.equal(directors[0].getCap(at), BASE_ASTEROID_COUNT * (2 ** count));
+    sameField(fields[0], fields[1], at);
+
+    // A resumed client and a late joiner replay the same unique shared records.
+    const late = new AsteroidDirector().reconstructField(WORLD_WIDTH, WORLD_HEIGHT, at, records);
+    sameField(fields[0], late, at);
+    records.set(id, { destroyedAt: epoch + count * 90000 });
+    assert.equal(directors[0].reconstructField(WORLD_WIDTH, WORLD_HEIGHT, at, records).length, fields[0].length);
+    assert.equal(directors[0].fieldGeneration, count);
+  }
 });
 
 test('epoch transition makes both clients create the same next field', () => {

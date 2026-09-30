@@ -4,6 +4,18 @@ export class SpellingChallengeController {
   constructor({ overlay, onComplete }) {
     this.overlay = overlay; this.title = overlay.querySelector('[data-wormhole-title]'); this.phaseLabel = overlay.querySelector('[data-wormhole-phase]'); this.wordDisplay = overlay.querySelector('[data-wormhole-word]'); this.input = overlay.querySelector('[data-wormhole-input]'); this.feedback = overlay.querySelector('[data-wormhole-feedback]'); this.readyButton = overlay.querySelector('[data-wormhole-ready]'); this.testButton = overlay.querySelector('[data-wormhole-test]'); this.checkButton = overlay.querySelector('[data-wormhole-check]'); this.onComplete = onComplete; this.challenges = new Map(); this.queue = []; this.activePlayerId = null;
     this.readyButton.addEventListener('click', () => this.beginPractice()); this.testButton.addEventListener('click', () => this.beginRetrieval()); this.input.addEventListener('input', () => this.checkPractice()); this.checkButton.addEventListener('click', () => this.submitRetrieval()); overlay.querySelector('[data-wormhole-form]').addEventListener('submit', (event) => { event.preventDefault(); this.submitRetrieval(); });
+    for (const type of ['selectstart', 'copy', 'cut', 'contextmenu']) {
+      this.wordDisplay.addEventListener(type, (event) => event.preventDefault());
+    }
+    for (const type of ['paste', 'cut', 'drop']) {
+      this.input.addEventListener(type, (event) => event.preventDefault());
+    }
+    this.input.addEventListener('beforeinput', (event) => {
+      if (['insertFromPaste', 'insertFromDrop', 'deleteByCut'].includes(event.inputType)) event.preventDefault();
+    });
+    this.input.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') event.preventDefault();
+    });
   }
   begin({ playerId, reason }) { if (this.challenges.has(playerId)) return; const wordRecord = getNextSpellingWord({ playerId, studentId: null }); const challenge = { playerId, reason, ...wordRecord, phase: 'learn', retrievalAttempts: 0, startedAt: Date.now(), completedAt: null }; this.challenges.set(playerId, challenge); this.queue.push(playerId); this.showNext(); }
   showNext() { if (this.activePlayerId || !this.queue.length) return; this.activePlayerId = this.queue.shift(); const challenge = this.challenges.get(this.activePlayerId); this.overlay.classList.add('visible'); this.overlay.setAttribute('aria-hidden', 'false'); this.input.value = ''; this.feedback.textContent = ''; this.render(challenge); }

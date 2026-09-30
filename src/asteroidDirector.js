@@ -8,7 +8,7 @@ import { sharedClock } from './sharedClock.js';
  * Owns:
  * - synchronized asteroid-field timing
  * - difficulty tiers
- * - asteroid caps
+ * - asteroid population
  * - replacement timing
  * - field generations
  * - deterministic asteroid identities
@@ -61,35 +61,31 @@ const JOIN_WINDOW =
 const SPAWN_MARGIN =
   70;
 
+const BASE_ASTEROID_COUNT = 10;
+
 
 const TIERS = [
   {
-    cap: 10,
     respawnSeconds: 60
   },
 
   {
-    cap: 20,
     respawnSeconds: 50
   },
 
   {
-    cap: 30,
     respawnSeconds: 40
   },
 
   {
-    cap: 40,
     respawnSeconds: 30
   },
 
   {
-    cap: 50,
     respawnSeconds: 20
   },
 
   {
-    cap: 60,
     respawnSeconds: 10
   }
 ];
@@ -363,9 +359,7 @@ export class AsteroidDirector {
   getCap(
     now = sharedClock.now()
   ) {
-    return this.getTier(
-      now
-    ).cap;
+    return BASE_ASTEROID_COUNT * (2 ** this.fieldGeneration);
   }
 
 
@@ -746,7 +740,7 @@ export class AsteroidDirector {
       this.fieldSpawnTimestamp = record.destroyedAt;
     }
 
-    const initialCount = this.fieldGeneration === 0 ? 10 : this.getCap(this.fieldSpawnTimestamp);
+    const initialCount = this.getCap(this.fieldSpawnTimestamp);
     const asteroids = this.createField(worldWidth, worldHeight, initialCount, now);
     const active = new Map(asteroids.map(asteroid => [asteroid.id, asteroid]));
     const prefix = `epoch-${epoch}-field-${this.fieldGeneration}-`;
@@ -788,8 +782,7 @@ export class AsteroidDirector {
      ======================================================= */
 
   /*
-   * Destroying MR. K advances the current effective
-   * difficulty by one tier.
+   * Each authoritative MR. K event doubles the base field.
    *
    * game.js receives the new cap and replaces the ordinary
    * asteroid field.
@@ -855,9 +848,7 @@ export class AsteroidDirector {
         1,
 
       cap:
-        TIERS[
-          after
-        ].cap,
+        this.getCap(now),
 
       respawnSeconds:
         TIERS[
@@ -919,7 +910,7 @@ export class AsteroidDirector {
         1,
 
       cap:
-        tier.cap,
+        this.getCap(now),
 
       respawnSeconds:
         tier.respawnSeconds,
@@ -944,6 +935,7 @@ export const asteroidDirector =
    ========================================================= */
 
 export {
+  BASE_ASTEROID_COUNT,
   TIERS,
   TIER_DURATION,
   EPOCH_DURATION,
