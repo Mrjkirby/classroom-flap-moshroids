@@ -10,6 +10,9 @@ import { SafeZones } from './safeZone.js';
 import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
 import { weaponSystem } from './weaponSystem.js';
+import { sharedClock } from './sharedClock.js';
+import { WORLD_WIDTH, WORLD_HEIGHT } from './worldConfig.js';
+import { destroySharedAsteroid, getDestroyedAsteroids } from './asteroidNetwork.js';
 
 import {
   drawWrapped,
@@ -154,11 +157,8 @@ function resize() {
     0
   );
 
-  worldWidth =
-    width * 2.4;
-
-  worldHeight =
-    height * 2.4;
+  worldWidth = WORLD_WIDTH;
+  worldHeight = WORLD_HEIGHT;
 
   if (!safeZones) {
     safeZones =
@@ -294,50 +294,57 @@ const asteroidMultiplayer =
     addExplosion
   });
 
+let lastFieldRecords = null;
+let lastFieldEpoch = -1;
+let lastFieldSlot = -1;
+
 
 /* =========================================================
    ASTEROID FIELD ORCHESTRATION
    ========================================================= */
 
 function replaceAsteroidField(
-  count = asteroidDirector.getCap()
+  count = asteroidDirector.getCap(),
+  now = sharedClock.now()
 ) {
   world.asteroids =
     asteroidDirector.createField(
       worldWidth,
       worldHeight,
-      count
+      count,
+      now
     );
 
   asteroidMultiplayer.resetField();
 }
 
 
-function updateAsteroidRespawn() {
-  if (
-    asteroidDirector.checkEpochChange()
-  ) {
-    replaceAsteroidField(
-      asteroidDirector.getCap()
-    );
+function updateAsteroidRespawn(now) {
+  const records = getDestroyedAsteroids();
+  const epoch = asteroidDirector.getEpochNumber(now);
+  const slot = asteroidDirector.getRespawnSlot(now);
+  if (records === lastFieldRecords && epoch === lastFieldEpoch &&
+    slot === lastFieldSlot) return;
 
-    return;
+  const previousGeneration = asteroidDirector.fieldGeneration;
+  const previousEpoch = asteroidDirector.currentEpoch;
+  world.asteroids = asteroidDirector.reconstructField(
+    worldWidth, worldHeight, now, records
+  ).filter(asteroid => !asteroidMultiplayer.isPending(asteroid.id));
+
+  if (previousEpoch !== asteroidDirector.currentEpoch ||
+    previousGeneration !== asteroidDirector.fieldGeneration) {
+    asteroidMultiplayer.resetField();
+    if (previousEpoch === asteroidDirector.currentEpoch &&
+      asteroidDirector.fieldGeneration > previousGeneration) {
+      world.mrK = null;
+      world.mrKRespawnTimer = Math.max(
+        0, 60 - (now - asteroidDirector.fieldSpawnTimestamp) / 1000);
+    }
   }
-
-  const asteroid =
-    asteroidDirector.createRespawn(
-      world.asteroids.length,
-      worldWidth,
-      worldHeight
-    );
-
-  if (!asteroid) {
-    return;
-  }
-
-  world.asteroids.push(
-    asteroid
-  );
+  lastFieldRecords = records;
+  lastFieldEpoch = epoch;
+  lastFieldSlot = asteroidDirector.getRespawnSlot(now);
 }
 
 
@@ -355,21 +362,10 @@ function spawnMrK() {
 
 
 function advanceAsteroidsFromMrK() {
-  const result =
-    asteroidDirector.mrKDestroyed();
-
-  replaceAsteroidField(
-    result.cap
-  );
-
-  console.log(
-    'MR. K DESTROYED — ASTEROID TIER:',
-    result.tierNumber,
-    'CAP:',
-    result.cap,
-    'RESPAWN:',
-    `${result.respawnSeconds}s`
-  );
+  const eventId = `epoch-${asteroidDirector.currentEpoch}-mrk-${asteroidDirector.fieldGeneration}`;
+  destroySharedAsteroid(eventId).then(won => {
+    if (!won) console.warn('MR. K field advance was not confirmed:', eventId);
+  });
 }
 
 
@@ -806,7 +802,10 @@ function reset() {
 
   weaponSystem.reset();
 
-  asteroidDirector.reset();
+  asteroidDirector.reset(sharedClock.now());
+  lastFieldRecords = null;
+  lastFieldEpoch = -1;
+  lastFieldSlot = -1;
 
   replaceAsteroidField(
     10
@@ -933,19 +932,17 @@ function updateBullets(
    UPDATE — ASTEROIDS
    ========================================================= */
 
-function updateAsteroids(
-  dt
-) {
+function updateAsteroids(now) {
+  updateAsteroidRespawn(now);
+
   world.asteroids.forEach(
     (asteroid) =>
       asteroid.update(
-        dt,
+        now,
         worldWidth,
         worldHeight
       )
   );
-
-  updateAsteroidRespawn();
 
   if (!safeZones) {
     return;
@@ -1115,9 +1112,7 @@ function updateParticles(
    UPDATE
    ========================================================= */
 
-function update(
-  dt
-) {
+function update(dt, sharedNow) {
   syncRemoteShips(
     dt
   );
@@ -1134,9 +1129,7 @@ function update(
     dt
   );
 
-  updateAsteroids(
-    dt
-  );
+  updateAsteroids(sharedNow);
 
   updateMrK(
     dt
@@ -1393,7 +1386,8 @@ function frame(
 
   if (hasStarted) {
     update(
-      dt
+      dt,
+      sharedClock.now()
     );
   }
 

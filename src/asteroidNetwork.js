@@ -41,6 +41,7 @@ import {
   onValue,
   runTransaction
 } from 'https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js';
+import { sharedClock } from './sharedClock.js';
 
 
 /* =========================================================
@@ -311,7 +312,7 @@ export async function destroySharedAsteroid(
               currentUser.uid,
 
             destroyedAt:
-              Date.now()
+              sharedClock.now()
           };
         },
 

@@ -1,4 +1,4 @@
-import { drawWrapped, TAU, wrapPosition } from './physics.js';
+import { drawWrapped, TAU, wrap } from './physics.js';
 
 const SIZES = {
   large: { radius: 30, points: 50 },
@@ -12,7 +12,7 @@ function seededRandom(seed) {
 }
 
 export class Asteroid {
-  constructor(x, y, size = 'large', seed = 1, id = `asteroid-${seed}`) {
+  constructor(x, y, size = 'large', seed = 1, id = `asteroid-${seed}`, spawnTimestamp = 0) {
     const config = SIZES[size] || SIZES.large;
 
     this.id = id;
@@ -21,6 +21,9 @@ export class Asteroid {
 
     this.x = x;
     this.y = y;
+    this.startX = x;
+    this.startY = y;
+    this.spawnTimestamp = spawnTimestamp;
 
     this.radius = config.radius;
     this.points = config.points;
@@ -47,6 +50,7 @@ export class Asteroid {
 
     this.angle =
       seededRandom(seed + 100) * TAU;
+    this.startAngle = this.angle;
 
     /*
      * Deterministic rock shape.
@@ -64,20 +68,18 @@ export class Asteroid {
     );
   }
 
-  update(dt, width, height) {
-    const frameScale = dt * 60;
-
-    this.x += this.velocityX * frameScale;
-    this.y += this.velocityY * frameScale;
-
-    this.angle += this.rotation * frameScale;
+  update(sharedNow, width, height) {
+    const elapsedSeconds = Math.max(0, (sharedNow - this.spawnTimestamp) / 1000);
+    const frameScale = elapsedSeconds * 60;
 
     /*
      * Asteroids travel continuously through the arena.
      * Leaving one edge brings the same asteroid through
      * the opposite edge.
      */
-    wrapPosition(this, width, height);
+    this.x = wrap(this.startX + this.velocityX * frameScale, width);
+    this.y = wrap(this.startY + this.velocityY * frameScale, height);
+    this.angle = this.startAngle + this.rotation * frameScale;
   }
 
   /*

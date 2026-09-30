@@ -65,6 +65,7 @@ import {
   startAsteroidListener,
   stopAsteroidListener
 } from './asteroidNetwork.js';
+import { sharedClock } from './sharedClock.js';
 
 
 /* =========================================================
@@ -111,6 +112,13 @@ const database =
   getDatabase(
     app
   );
+
+// One Firebase metadata listener supplies the clock offset; no clock writes.
+onValue(ref(database, '.info/serverTimeOffset'), (snapshot) => {
+  sharedClock.setOffset(Number(snapshot.val()));
+}, (error) => {
+  console.warn('Moshroids server clock unavailable; using local clock:', error);
+});
 
 
 /* =========================================================

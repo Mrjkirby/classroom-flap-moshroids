@@ -1,4 +1,5 @@
 import { Asteroid } from './asteroid.js';
+import { sharedClock } from './sharedClock.js';
 
 
 /*
@@ -144,15 +145,15 @@ export class AsteroidDirector {
      ======================================================= */
 
   /*
-   * Date.now() is deliberate.
+   * Shared wall time is deliberate.
    *
    * performance.now() begins independently in every browser.
-   * Date.now() lets all browsers derive the same 30-minute
-   * epoch from wall-clock time.
+   * Firebase's server offset lets browsers derive the same
+   * 30-minute epoch from wall-clock time.
    */
 
   reset(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     this.mrKAdvances =
       0;
@@ -170,6 +171,8 @@ export class AsteroidDirector {
 
     this.lastRespawnSlot =
       -1;
+
+    this.fieldSpawnTimestamp = this.getEpochStart(now);
   }
 
 
@@ -178,7 +181,7 @@ export class AsteroidDirector {
      ======================================================= */
 
   getEpochNumber(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     return Math.floor(
       now /
@@ -191,7 +194,7 @@ export class AsteroidDirector {
 
 
   getEpochStart(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     const epoch =
       this.getEpochNumber(
@@ -207,7 +210,7 @@ export class AsteroidDirector {
 
 
   getEpochElapsedSeconds(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     return Math.max(
       0,
@@ -228,7 +231,7 @@ export class AsteroidDirector {
    */
 
   isJoinWindow(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     return (
       this.getEpochElapsedSeconds(
@@ -240,7 +243,7 @@ export class AsteroidDirector {
 
 
   getJoinCountdown(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     if (
       !this.isJoinWindow(
@@ -271,7 +274,7 @@ export class AsteroidDirector {
    */
 
   checkEpochChange(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     const epoch =
       this.getEpochNumber(
@@ -300,6 +303,8 @@ export class AsteroidDirector {
     this.lastRespawnSlot =
       -1;
 
+    this.fieldSpawnTimestamp = this.getEpochStart(now);
+
     return true;
   }
 
@@ -309,7 +314,7 @@ export class AsteroidDirector {
      ======================================================= */
 
   getTimeTier(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     const elapsed =
       this.getEpochElapsedSeconds(
@@ -328,7 +333,7 @@ export class AsteroidDirector {
 
 
   getTierIndex(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     return Math.min(
       TIERS.length - 1,
@@ -345,7 +350,7 @@ export class AsteroidDirector {
 
 
   getTier(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     return TIERS[
       this.getTierIndex(
@@ -356,7 +361,7 @@ export class AsteroidDirector {
 
 
   getCap(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     return this.getTier(
       now
@@ -365,7 +370,7 @@ export class AsteroidDirector {
 
 
   getRespawnSeconds(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     return this.getTier(
       now
@@ -378,7 +383,7 @@ export class AsteroidDirector {
      ======================================================= */
 
   getRespawnSlot(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     const interval =
       this.getRespawnSeconds(
@@ -399,7 +404,7 @@ export class AsteroidDirector {
 
   shouldRespawn(
     currentAsteroidCount,
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     const cap =
       this.getCap(
@@ -504,11 +509,10 @@ export class AsteroidDirector {
 
   createAsteroid(
     worldWidth,
-    worldHeight
+    worldHeight,
+    spawnTimestamp = this.fieldSpawnTimestamp,
+    identity = this.createAsteroidIdentity()
   ) {
-    const identity =
-      this.createAsteroidIdentity();
-
 
     /*
      * Select one of four outer edges.
@@ -626,7 +630,8 @@ export class AsteroidDirector {
       y,
       'large',
       identity.seed,
-      identity.id
+      identity.id,
+      spawnTimestamp
     );
   }
 
@@ -644,7 +649,8 @@ export class AsteroidDirector {
   createField(
     worldWidth,
     worldHeight,
-    count = this.getCap()
+    count = this.getCap(),
+    now = sharedClock.now()
   ) {
     const asteroidCount =
       Math.max(
@@ -668,7 +674,8 @@ export class AsteroidDirector {
       asteroids.push(
         this.createAsteroid(
           worldWidth,
-          worldHeight
+          worldHeight,
+          this.fieldSpawnTimestamp
         )
       );
     }
@@ -695,7 +702,7 @@ export class AsteroidDirector {
     currentAsteroidCount,
     worldWidth,
     worldHeight,
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     if (
       !this.shouldRespawn(
@@ -707,10 +714,72 @@ export class AsteroidDirector {
     }
 
 
-    return this.createAsteroid(
-      worldWidth,
-      worldHeight
-    );
+    const slotStart = this.getEpochStart(now) +
+      this.lastRespawnSlot * this.getRespawnSeconds(now) * 1000;
+
+    const slot = this.lastRespawnSlot;
+    const identity = this.respawnIdentity(slot);
+
+    return this.createAsteroid(worldWidth, worldHeight, slotStart, identity);
+  }
+
+  respawnIdentity(slot) {
+    return {
+      id: `epoch-${this.currentEpoch}-field-${this.fieldGeneration}-respawn-${slot}`,
+      seed: ((this.currentEpoch % 100000) * 100000) + this.fieldGeneration * 1000 + 10000 + slot
+    };
+  }
+
+  /* Rebuild the active field from shared events and clock slots. A late
+   * joiner follows the same timeline as a client that stayed connected. */
+  reconstructField(worldWidth, worldHeight, now, destroyedRecords) {
+    const epoch = this.getEpochNumber(now);
+    const epochStart = this.getEpochStart(now);
+    const mrKEvents = [...destroyedRecords]
+      .filter(([id, record]) => id.startsWith(`epoch-${epoch}-mrk-`) &&
+        record.destroyedAt >= epochStart && record.destroyedAt <= now)
+      .sort((a, b) => a[1].destroyedAt - b[1].destroyedAt);
+
+    this.reset(now);
+    for (const [, record] of mrKEvents) {
+      this.mrKDestroyed(record.destroyedAt);
+      this.fieldSpawnTimestamp = record.destroyedAt;
+    }
+
+    const initialCount = this.fieldGeneration === 0 ? 10 : this.getCap(this.fieldSpawnTimestamp);
+    const asteroids = this.createField(worldWidth, worldHeight, initialCount, now);
+    const active = new Map(asteroids.map(asteroid => [asteroid.id, asteroid]));
+    const prefix = `epoch-${epoch}-field-${this.fieldGeneration}-`;
+    const destructions = [...destroyedRecords]
+      .filter(([id, record]) => id.startsWith(prefix) &&
+        record.destroyedAt >= this.fieldSpawnTimestamp && record.destroyedAt <= now)
+      .sort((a, b) => a[1].destroyedAt - b[1].destroyedAt);
+
+    let destructionIndex = 0;
+    const applyDestructions = (at) => {
+      while (destructionIndex < destructions.length &&
+        destructions[destructionIndex][1].destroyedAt <= at) {
+        active.delete(destructions[destructionIndex][0]);
+        destructionIndex += 1;
+      }
+    };
+
+    let previousSlot = this.getRespawnSlot(this.fieldSpawnTimestamp);
+    for (let time = Math.ceil(this.fieldSpawnTimestamp / 1000) * 1000;
+      time <= now; time += 1000) {
+      applyDestructions(time);
+      const slot = this.getRespawnSlot(time);
+      if (slot > previousSlot && !this.isJoinWindow(time) &&
+        active.size < this.getCap(time)) {
+        const asteroid = this.createAsteroid(
+          worldWidth, worldHeight, time, this.respawnIdentity(slot));
+        active.set(asteroid.id, asteroid);
+      }
+      previousSlot = slot;
+    }
+    applyDestructions(now);
+    this.lastRespawnSlot = previousSlot;
+    return [...active.values()];
   }
 
 
@@ -727,7 +796,7 @@ export class AsteroidDirector {
    */
 
   mrKDestroyed(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     const before =
       this.getTierIndex(
@@ -755,6 +824,8 @@ export class AsteroidDirector {
 
     this.fieldGeneration +=
       1;
+
+    this.fieldSpawnTimestamp = now;
 
     this.nextAsteroidId =
       1;
@@ -807,7 +878,7 @@ export class AsteroidDirector {
      ======================================================= */
 
   getState(
-    now = Date.now()
+    now = sharedClock.now()
   ) {
     const tierIndex =
       this.getTierIndex(
