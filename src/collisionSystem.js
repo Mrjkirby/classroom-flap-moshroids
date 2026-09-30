@@ -183,6 +183,7 @@ export function createCollisionSystem({
   getProjectileAsteroids = () => [],
   destroyProjectile = () => false,
   isPerimeterShip = () => false,
+  canPlayerWeaponDamage = () => true,
 
   playerDestroyed,
 
@@ -623,6 +624,7 @@ export function createCollisionSystem({
               bullet.owner &&
             ship.visible &&
             !isPerimeterShip(ship) &&
+            canPlayerWeaponDamage(bullet, ship) &&
             projectileHit(
               bullet,
               ship

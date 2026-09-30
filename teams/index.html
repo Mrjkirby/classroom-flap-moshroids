@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050505">
+  <title>Moshroids // Multiplayer Asteroids</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+
+<body>
+
+  <!-- =========================================================
+       PILOT LOGIN
+       Firebase multiplayer will attach to this in the next step.
+       ========================================================= -->
+  <section
+    class="pilot-login-overlay"
+    id="pilotLoginOverlay"
+    aria-labelledby="pilotLoginTitle"
+  >
+    <div class="pilot-login-panel">
+      <div class="wormhole-kicker">MOSHROIDS — TEAMS MODE</div>
+
+      <h1 id="pilotLoginTitle">ENTER PILOT NAME</h1>
+
+      <p>IDENTIFY YOUR SHIP</p>
+
+      <form id="pilotLoginForm">
+        <input
+          id="pilotNameInput"
+          type="text"
+          maxlength="24"
+          autocomplete="off"
+          autocapitalize="words"
+          spellcheck="false"
+          placeholder="PILOT NAME"
+          aria-label="Pilot name"
+          required
+        >
+
+        <button id="pilotEnterButton" type="submit">
+          ENTER MOSH
+        </button>
+      </form>
+
+      <div
+        class="pilot-login-status"
+        id="pilotLoginStatus"
+        aria-live="polite"
+      >
+        READY
+      </div>
+    </div>
+  </section>
+
+
+  <main class="game-shell">
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">//</span>
+        <span>MOSHROIDS</span>
+      </div>
+
+      <div class="topbar-tools">
+        <label class="zoom-control" for="zoomControl">
+          <span>
+            VIEW
+            <output id="zoomValue">100%</output>
+          </span>
+
+          <input
+            id="zoomControl"
+            type="range"
+            min="0.5"
+            max="1.25"
+            step="0.05"
+            value="1"
+            aria-label="Adjust entire game interface size"
+          >
+        </label>
+
+        <div class="status">
+          <span class="status-dot"></span>
+          <span id="networkStatus">LIVE SYSTEM</span>
+        </div>
+      </div>
+    </header>
+
+
+    <section class="scoreboard" aria-label="Scores">
+
+      <div class="score score-a">
+        <span class="score-label">
+          <b id="pilotDisplayName">PILOT</b>
+        </span>
+
+        <strong id="scoreA">00000</strong>
+      </div>
+
+      <div class="round-info">
+        <span>SECTOR 01</span>
+        <span>ASTEROID FIELD</span>
+      </div>
+
+      <div class="score score-b" aria-hidden="true"></div>
+
+    </section>
+
+
+    <section
+      class="canvas-frame"
+      aria-label="Moshroids game area"
+    >
+
+      <canvas
+        id="gameCanvas"
+        tabindex="0"
+        aria-label="Multiplayer asteroid game"
+      ></canvas>
+
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+
+      <div
+        class="start-hint"
+        id="startHint"
+      >
+        PRESS ANY CONTROL TO LAUNCH
+      </div>
+
+    </section>
+
+
+    <section
+      class="wormhole-overlay"
+      id="wormholeOverlay"
+      aria-live="polite"
+      aria-hidden="true"
+    >
+
+      <div class="wormhole-panel">
+
+        <div class="wormhole-kicker">
+          SPELLING WORMHOLE
+        </div>
+
+        <h1 data-wormhole-title>
+          PILOT
+        </h1>
+
+        <p>
+          YOU ARE LOST IN THE SPELLING WORMHOLE
+        </p>
+
+        <p data-wormhole-phase>
+          LEARN THE WORD
+        </p>
+
+        <div
+          class="wormhole-word"
+          data-wormhole-word
+        ></div>
+
+        <p class="wormhole-instruction">
+          LOOK CAREFULLY. SPELL IT TO RETURN.
+        </p>
+
+        <form data-wormhole-form>
+
+          <input
+            data-wormhole-input
+            type="text"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false"
+            aria-label="Spelling answer"
+          >
+
+          <button
+            data-wormhole-ready
+            type="button"
+          >
+            I'M READY
+          </button>
+
+          <button
+            data-wormhole-test
+            type="button"
+            hidden
+            disabled
+          >
+            TEST ME
+          </button>
+
+          <button
+            data-wormhole-check
+            type="button"
+            hidden
+          >
+            CHECK
+          </button>
+
+        </form>
+
+        <div
+          class="wormhole-feedback"
+          data-wormhole-feedback
+        ></div>
+
+      </div>
+
+    </section>
+
+
+    <footer class="controls">
+
+      <div class="control-group">
+
+        <span class="control-title">
+          <i class="key-accent accent-a"></i>
+          <span id="controlsPilotName">PILOT</span>
+        </span>
+
+        <span class="keys">
+          <kbd>LEFT</kbd>
+          <kbd>RIGHT</kbd>
+          <kbd>UP</kbd>
+          <kbd>DOWN</kbd>
+          <kbd>SPACE FIRE</kbd>
+        </span>
+
+      </div>
+
+      <div class="legend">
+        <span>ARROWS MOVE</span>
+        <span>SPACE FIRE</span>
+      </div>
+
+    </footer>
+
+  </main>
+
+  <script type="module" src="../src/game.js"></script>
+
+</body>
+</html>

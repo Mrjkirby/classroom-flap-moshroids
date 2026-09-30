@@ -2,6 +2,7 @@ import {
   drawWrapped,
   wrapPosition
 } from './physics.js';
+import { TEAM_COLORS } from './teams/teamBases.js';
 
 
 export class Ship {
@@ -371,9 +372,9 @@ export class Ship {
          * Multiplayer ships = cyan.
          */
         drawCtx.strokeStyle =
-          this.owner === 'A'
+          TEAM_COLORS[this.team] || (this.owner === 'A'
             ? '#ff875f'
-            : '#72e6dd';
+            : '#72e6dd');
 
         drawCtx.lineWidth =
           1.5;

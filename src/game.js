@@ -14,7 +14,11 @@ import { sharedClock } from './sharedClock.js';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './worldConfig.js';
 import { destroySharedAsteroid, getDestroyedAsteroids } from './asteroidNetwork.js';
 import { createGauntletDirector } from './gauntlet/director.js';
-import { IS_ONE_VS_WORLD } from './gameMode.js';
+import { IS_ONE_VS_WORLD, IS_TEAMS } from './gameMode.js';
+import { drawTeamBases } from './teams/teamBases.js';
+import { canTeamBulletDamage } from './teams/teamRules.js';
+import { bulletsFromVolley } from './teams/teamProjectiles.js';
+import { createTeamDirector } from './teams/teamDirector.js';
 
 import {
   drawWrapped,
@@ -27,6 +31,8 @@ import {
   getLocalIdentity,
   getRemotePlayers,
   publishLocalState,
+  publishTeamChange,
+  publishTeamVolley,
   updateRemotePlayers
 } from './multiplayer.js';
 
@@ -76,6 +82,15 @@ const camera =
 
 let safeZones =
   null;
+
+const seenTeamShots = new Map();
+const teams = createTeamDirector({
+  enabled: IS_TEAMS,
+  isJoined: () => multiplayerJoined,
+  publishChange: publishTeamChange,
+  getWorldWidth: () => worldWidth,
+  getWorldHeight: () => worldHeight
+});
 
 
 const world = {
@@ -173,7 +188,9 @@ function resize() {
   worldWidth = WORLD_WIDTH;
   worldHeight = WORLD_HEIGHT;
 
-  if (!safeZones) {
+  if (IS_TEAMS) {
+    safeZones = null;
+  } else if (!safeZones) {
     safeZones =
       new SafeZones(
         worldWidth,
@@ -448,6 +465,8 @@ function playerDestroyed(
     return false;
   }
 
+  teams.reset(ship);
+
   if (gauntlet.active()) {
     // The 1VW round resets after spelling; do not seed the next race
     // with the Survivor's forty guns.
@@ -496,6 +515,7 @@ function respawnPlayer(
   );
 
   ship.respawn();
+  teams.reset(ship);
 
   publishPlayerState(
     true
@@ -642,8 +662,26 @@ function syncRemoteShips(
 
       ship.guns =
         remote.guns;
+
+      if (IS_TEAMS) {
+        ship.team = remote.team;
+        for (const shot of remote.teamShots) {
+          const key = `${uid}:${shot.id}`;
+          if (seenTeamShots.has(key)) continue;
+          seenTeamShots.set(key, shot.at);
+          world.bullets.push(...bulletsFromVolley(
+            shot, uid, sharedClock.now(), worldWidth, worldHeight));
+        }
+      }
     }
   );
+
+  if (IS_TEAMS) {
+    const cutoff = sharedClock.now() - 1500;
+    for (const [key, at] of seenTeamShots) {
+      if (at < cutoff) seenTeamShots.delete(key);
+    }
+  }
 }
 
 
@@ -729,11 +767,17 @@ function fireWeapons(
           emitter.angle,
           emitter.velocityX,
           emitter.velocityY,
-          ship.owner
+          ship.owner,
+          IS_TEAMS ? ship.team : null
         )
       );
     }
   );
+
+  if (IS_TEAMS && multiplayerJoined) {
+    publishTeamVolley(ship, weaponSystem.getGunCount())
+      .catch(error => console.error('Team volley failed:', error));
+  }
 }
 
 
@@ -778,6 +822,7 @@ const collisionSystem =
     getProjectileAsteroids: () => world.gauntletProjectiles,
     destroyProjectile: gauntlet.destroyProjectile,
     isPerimeterShip: gauntlet.isPerimeterShip,
+    canPlayerWeaponDamage: IS_TEAMS ? canTeamBulletDamage : () => true,
 
     isAsteroidDestructionPending:
       id => asteroidMultiplayer.isPending(id) || gauntlet.isProjectilePending(id),
@@ -812,6 +857,10 @@ function reset() {
   ];
 
   world.bullets = [];
+  if (IS_TEAMS) {
+    world.ships[0].team = 'neutral';
+    seenTeamShots.clear();
+  }
   gauntlet.clear();
   world.missiles = [];
   world.particles = [];
@@ -882,6 +931,8 @@ function updateShips(
         );
       }
 
+      if (!ship.remote) teams.update(ship);
+
       if (
         fireTrigger &&
         !ship.remote
@@ -905,12 +956,18 @@ function updateBullets(
   dt
 ) {
   world.bullets.forEach(
-    (bullet) =>
+    (bullet) => {
       bullet.update(
         dt,
         worldWidth,
         worldHeight
-      )
+      );
+      if (bullet.catchUpStart) {
+        bullet.previousX = bullet.catchUpStart.x;
+        bullet.previousY = bullet.catchUpStart.y;
+        delete bullet.catchUpStart;
+      }
+    }
   );
 
   world.bullets =
@@ -1256,6 +1313,7 @@ function drawWorld() {
       ctx
     );
   }
+  if (IS_TEAMS) drawTeamBases(ctx, worldWidth, worldHeight);
 
   world.asteroids.forEach(
     (asteroid) =>

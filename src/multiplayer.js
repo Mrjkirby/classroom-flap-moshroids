@@ -59,7 +59,10 @@ import {
   startGunDropListener,
   stopGunDropListener
 } from './gunDropMultiplayer.js';
-import { ROOM_PATH, IS_ONE_VS_WORLD } from './gameMode.js';
+import { ROOM_PATH, IS_ONE_VS_WORLD, IS_TEAMS } from './gameMode.js';
+import { teamAtBase } from './teams/teamBases.js';
+import { normalizeTeam } from './teams/teamRules.js';
+import { WORLD_WIDTH, WORLD_HEIGHT } from './worldConfig.js';
 import { configureGauntletNetwork, startGauntletListener, stopGauntletListener } from './gauntlet/network.js';
 
 import {
@@ -161,6 +164,9 @@ let lastNetworkSend =
 
 let connected =
   false;
+
+let shotSequence = 0;
+let recentTeamShots = [];
 
 
 /* =========================================================
@@ -505,6 +511,8 @@ async function createPlayerRecord(
           initialState.guns
         ),
 
+      ...(IS_TEAMS ? { team: 'neutral' } : {}),
+
       updatedAt:
         serverTimestamp()
     }
@@ -620,6 +628,11 @@ function startPlayerListener() {
                   clampGunCount(
                     player.guns
                   ),
+
+                ...(IS_TEAMS ? {
+                  team: normalizeTeam(player.team),
+                  teamShots: Array.isArray(player.teamShots) ? player.teamShots : []
+                } : {}),
 
                 renderX:
                   previous
@@ -749,6 +762,36 @@ async function publishLocalState(
 
     return false;
   }
+}
+
+// Team claims carry the contact position; the same geometry is checked here
+// before the single change write. Firebase's existing self-write rule remains
+// the authority for which pilot may update the player record.
+async function publishTeamChange(team, ship) {
+  if (!IS_TEAMS || !connected || !playerRef || !ship) return false;
+  const next = normalizeTeam(team);
+  if (next !== 'neutral' &&
+    teamAtBase(ship.x, ship.y, ship.radius, WORLD_WIDTH, WORLD_HEIGHT) !== next) return false;
+  await update(playerRef, {
+    team: next, x: ship.x, y: ship.y, visible: ship.visible,
+    updatedAt: serverTimestamp()
+  });
+  return true;
+}
+
+// One event per trigger. A rolling one-second window lives in the existing
+// player listener; no projectile coordinates are written after firing.
+async function publishTeamVolley(ship, gunCount) {
+  if (!IS_TEAMS || !connected || !playerRef) return false;
+  const now = sharedClock.now();
+  recentTeamShots = recentTeamShots.filter(shot => now - shot.at < 1000);
+  recentTeamShots.push({
+    id: ++shotSequence, at: now, x: ship.x, y: ship.y,
+    angle: ship.angle, velocityX: ship.velocityX, velocityY: ship.velocityY,
+    guns: gunCount, team: normalizeTeam(ship.team)
+  });
+  await update(playerRef, { teamShots: recentTeamShots });
+  return true;
 }
 
 
@@ -1154,5 +1197,7 @@ export {
   isMultiplayerConnected,
   leaveMultiplayer,
   publishLocalState,
+  publishTeamChange,
+  publishTeamVolley,
   updateRemotePlayers
 };

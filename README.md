@@ -4,7 +4,7 @@ MOSHROIDS is a browser-based multiplayer classroom Asteroids game. Players enter
 
 ## Structure
 
-- `index.html`, `style.css`: page and presentation.
+- `index.html`, `1vw/index.html`, `teams/index.html`, `style.css`: mode entry pages and presentation.
 - `src/game.js`: game setup and orchestration.
 - `src/asteroid.js`, `src/asteroidDirector.js`, `src/asteroidMultiplayer.js`, `src/asteroidNetwork.js`: asteroid entity, field generation, shared destruction coordination, and Firebase transport.
 - `src/sharedClock.js`, `src/worldConfig.js`: Firebase server-time offset and fixed shared arena dimensions. Asteroid positions are derived from immutable spawn state and shared time; no position frames are sent to Firebase.
@@ -12,8 +12,9 @@ MOSHROIDS is a browser-based multiplayer classroom Asteroids game. Players enter
 - `src/multiplayer.js`: Firebase authentication, player presence, and pilot login.
 - `src/gunDropSystem.js`, `src/gunDropMultiplayer.js`: gun drop gameplay and networking.
 - Other `src/` modules own the corresponding physics, entities, collisions, spelling, and weapons.
-- `src/gameMode.js` routes `/` to Classic and `/1vw/` to One vs World. Both pages load `src/game.js`; their Firebase rooms are separate (`classroom` and `classroom-1vw`).
-- Both modes use the same Firebase anonymous sign-in session on the same site origin; switching URLs does not add another login system.
+- `src/gameMode.js` routes `/` to Classic, `/1vw/` to One vs World, and `/teams/` to Teams. All pages load `src/game.js` and use separate Firebase rooms (`classroom`, `classroom-1vw`, and `classroom-teams`).
+- All modes use the same Firebase anonymous sign-in session on the same site origin; switching URLs does not add another login system.
+- `src/teams/` owns half-size colored corner-base geometry, team damage rules, and remote volley reconstruction. Teams start neutral, join or switch on physical L-base contact, and reset to neutral on death. Only same-team player weapon damage is disabled. Team claims and fire snapshots use change/trigger writes on the existing player record and player listener; no bases or projectile positions are streamed. The existing asteroid, MR. K, gun, spelling, and shared-clock systems run in the Teams room.
 - `src/gauntlet/` owns the 1VW room transition, perimeter layout, cannon events, projectile reconstruction, and deterministic asteroid bounce trajectories. `bossState` in the 1VW room records the Survivor, phase, round, and shared start time. Cannon transactions store at most one accepted shot per player per second; no asteroid or turret positions are streamed.
 - `src/spellingController.js` owns the spelling challenge UI, including word-copy and answer-paste guards. The word remains visible, and answers are typed with normal keyboard or mobile input.
 
@@ -29,8 +30,12 @@ Run `node --test tests/spelling-input.mjs` for spelling copy/paste guards and th
 
 Run `node --test tests/gauntlet.mjs` for 1VW routing, atomic transition rules, perimeter controls, bounce behavior, cannon timing and size, collision protection, and projectile replay.
 
+Run `node --test tests/teams.mjs` for Teams routing, base geometry/contact, team transitions, player weapon rules, volley replay, and environmental hazards.
+
 ## Deployment
 
 GitHub Pages serves the root of the `main` branch at https://mrjkirby.github.io/classroom-flap-moshroids/. The browser loads `src/game.js` directly from `index.html`, so imported filenames must match tracked files exactly, including case. Firebase hosts anonymous authentication and the multiplayer room; its public client configuration is in `src/multiplayer.js`.
 
 GitHub Pages serves `1vw/index.html` directly at https://mrjkirby.github.io/classroom-flap-moshroids/1vw/, including direct visits and refreshes. 1VW requires the existing Firebase `bossState`, player, gun-drop, and asteroid write boundaries to be enabled for the separate `classroom-1vw` room. If database rules deny access, login fails closed.
+
+GitHub Pages serves `teams/index.html` directly at https://mrjkirby.github.io/classroom-flap-moshroids/teams/, including direct visits and refreshes. Teams uses the existing authenticated player write boundary in the separate `classroom-teams` room. If database rules deny access, login fails closed.

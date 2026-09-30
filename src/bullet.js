@@ -1,6 +1,7 @@
 import {
   wrapPosition
 } from './physics.js';
+import { TEAM_COLORS } from './teams/teamBases.js';
 
 
 export class Bullet {
@@ -10,7 +11,8 @@ export class Bullet {
     angle,
     velocityX,
     velocityY,
-    owner
+    owner,
+    teamAtFire = null
   ) {
     this.x = x;
     this.y = y;
@@ -32,6 +34,8 @@ export class Bullet {
 
     this.owner =
       owner;
+
+    this.teamAtFire = teamAtFire;
 
     this.life =
       0.9;
@@ -88,9 +92,9 @@ export class Bullet {
     );
 
     ctx.strokeStyle =
-      this.owner === 'A'
+      TEAM_COLORS[this.teamAtFire] || (this.owner === 'A'
         ? '#ffb09a'
-        : '#b0fff8';
+        : '#b0fff8');
 
     ctx.lineWidth =
       1.5;
