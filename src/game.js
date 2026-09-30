@@ -1,6 +1,8 @@
 import { asteroidDirector } from './asteroidDirector.js';
 import { Bullet } from './bullet.js';
 import { Camera } from './camera.js';
+import { createCollisionSystem } from './collisionSystem.js';
+import { createGunDropSystem } from './gunDropSystem.js';
 import { HomingMissile } from './homingMissile.js';
 import { MrKRock } from './mrKRock.js';
 import { SafeZones } from './safeZone.js';
@@ -11,21 +13,15 @@ import { weaponSystem } from './weaponSystem.js';
 import {
   drawWrapped,
   normalizeDelta,
-  random,
-  wrappedDistance
+  random
 } from './physics.js';
 
 import {
   bindPilotLogin,
-  claimGunDrop,
   destroySharedAsteroid,
   getDestroyedAsteroids,
-  getGunDrops,
-  getLocalIdentity,
   getRemotePlayers,
-  publishGunDrops,
   publishLocalState,
-  removeExpiredGunDrop,
   updateRemotePlayers
 } from './multiplayer.js';
 
@@ -69,12 +65,13 @@ let lastTime =
 
 let hasStarted = false;
 let multiplayerJoined = false;
-let pickupInProgress = false;
 
 
 /*
- * These belong to shared multiplayer destruction handling,
- * NOT AsteroidDirector.
+ * These belong to shared asteroid multiplayer handling.
+ *
+ * They will move into asteroidMultiplayer.js in the next
+ * extraction.
  */
 const asteroidDestructionPending =
   new Set();
@@ -197,19 +194,6 @@ function resize() {
    ASTEROID FIELD ORCHESTRATION
    ========================================================= */
 
-/*
- * game.js owns world.asteroids.
- *
- * AsteroidDirector owns:
- *
- * - asteroid construction
- * - deterministic IDs
- * - deterministic seeds
- * - deterministic spawn positions
- * - field creation
- * - respawn timing
- * - difficulty
- */
 function replaceAsteroidField(
   count = asteroidDirector.getCap()
 ) {
@@ -220,22 +204,26 @@ function replaceAsteroidField(
       count
     );
 
-  /*
-   * A complete field replacement invalidates the local
-   * destruction bookkeeping belonging to the old field.
-   */
   asteroidDestructionPending.clear();
   processedDestroyedAsteroids.clear();
 }
 
 
-/*
- * Normal asteroid replenishment.
- *
- * AsteroidDirector decides whether exactly ONE asteroid
- * should be created.
- */
 function updateAsteroidRespawn() {
+  /*
+   * Keep the director synchronized to the shared
+   * half-hour epoch.
+   */
+  if (
+    asteroidDirector.checkEpochChange()
+  ) {
+    replaceAsteroidField(
+      asteroidDirector.getCap()
+    );
+
+    return;
+  }
+
   const asteroid =
     asteroidDirector.createRespawn(
       world.asteroids.length,
@@ -266,10 +254,6 @@ function spawnMrK() {
 }
 
 
-/*
- * Destroying MR. K advances the asteroid director one
- * effective tier and starts a completely new field generation.
- */
 function advanceAsteroidsFromMrK() {
   const result =
     asteroidDirector.mrKDestroyed();
@@ -317,11 +301,17 @@ function addExplosion(
 
       velocityX:
         Math.cos(angle) *
-        random(1, spread),
+        random(
+          1,
+          spread
+        ),
 
       velocityY:
         Math.sin(angle) *
-        random(1, spread),
+        random(
+          1,
+          spread
+        ),
 
       life:
         random(
@@ -388,63 +378,6 @@ function addRockExplosion(
 
 
 /* =========================================================
-   RESET
-   ========================================================= */
-
-function reset() {
-  world.ships = [
-    new Ship(
-      'A',
-      worldWidth * 0.5,
-      worldHeight * 0.5,
-      controls.A
-    )
-  ];
-
-  world.bullets = [];
-  world.missiles = [];
-  world.particles = [];
-
-  world.mrK = null;
-  world.mrKRespawnTimer = 0;
-
-  world.scores = {
-    A: 0
-  };
-
-  weaponSystem.reset();
-
-  /*
-   * Starts a new synchronized asteroid-director session.
-   */
-  asteroidDirector.reset();
-
-  /*
-   * MOSHROIDS always begins with exactly 10 ordinary asteroids.
-   */
-  replaceAsteroidField(10);
-
-  spawnMrK();
-
-  camera.x =
-    worldWidth * 0.5;
-
-  camera.y =
-    worldHeight * 0.5;
-
-  camera.update(
-    world.ships,
-    width,
-    height,
-    worldWidth,
-    worldHeight
-  );
-
-  updateScores();
-}
-
-
-/* =========================================================
    SCORE
    ========================================================= */
 
@@ -483,6 +416,9 @@ function suspendPlayerControls(
 
 /* =========================================================
    SHARED ASTEROID DESTRUCTION
+
+   This is intentionally the remaining multiplayer gameplay
+   subsystem in game.js. It is the next clean extraction.
    ========================================================= */
 
 function syncDestroyedAsteroids() {
@@ -631,250 +567,6 @@ async function destroyAsteroid(
 
 
 /* =========================================================
-   GUN DROPS
-   ========================================================= */
-
-async function dropLocalGuns(
-  ship
-) {
-  const identity =
-    getLocalIdentity();
-
-  if (!identity) {
-    return;
-  }
-
-  const gunCount =
-    weaponSystem.getGunCount();
-
-  const drops =
-    weaponSystem.createDrops(
-      ship.x,
-      ship.y,
-      identity.uid,
-      gunCount
-    );
-
-  weaponSystem.setGunCount(
-    1
-  );
-
-  if (drops.length) {
-    await publishGunDrops(
-      drops
-    );
-  }
-}
-
-
-function firebaseDropToLocal(
-  drop
-) {
-  const remainingMs =
-    Math.max(
-      0,
-      Number(
-        drop.expiresAt
-      ) -
-        Date.now()
-    );
-
-  const localNow =
-    performance.now();
-
-  return {
-    ...drop,
-
-    createdAt:
-      localNow,
-
-    expiresAt:
-      localNow +
-      remainingMs
-  };
-}
-
-
-function syncGunDrops() {
-  if (!multiplayerJoined) {
-    return;
-  }
-
-  const sharedDrops =
-    getGunDrops();
-
-  const sharedIds =
-    new Set(
-      sharedDrops.keys()
-    );
-
-  sharedDrops.forEach(
-    (
-      drop,
-      id
-    ) => {
-      const existing =
-        weaponSystem.drops.get(
-          id
-        );
-
-      const localDrop =
-        firebaseDropToLocal(
-          drop
-        );
-
-      if (existing) {
-        existing.x =
-          localDrop.x;
-
-        existing.y =
-          localDrop.y;
-
-        existing.radius =
-          localDrop.radius;
-
-        existing.expiresAt =
-          Math.min(
-            existing.expiresAt,
-            localDrop.expiresAt
-          );
-
-        return;
-      }
-
-      weaponSystem.addDrop(
-        localDrop
-      );
-    }
-  );
-
-  for (
-    const id of
-    [
-      ...weaponSystem.drops.keys()
-    ]
-  ) {
-    if (
-      !sharedIds.has(id)
-    ) {
-      weaponSystem.removeDrop(
-        id
-      );
-    }
-  }
-}
-
-
-async function checkGunPickup() {
-  if (
-    !multiplayerJoined ||
-    pickupInProgress
-  ) {
-    return;
-  }
-
-  const ship =
-    world.ships.find(
-      (candidate) =>
-        candidate.owner === 'A'
-    );
-
-  if (
-    !ship ||
-    !ship.visible ||
-    ship.state !== 'ACTIVE'
-  ) {
-    return;
-  }
-
-  if (
-    weaponSystem.getGunCount() >=
-    40
-  ) {
-    return;
-  }
-
-  const drop =
-    weaponSystem.findPickup(
-      ship
-    );
-
-  if (!drop) {
-    return;
-  }
-
-  pickupInProgress = true;
-
-  try {
-    const claimed =
-      await claimGunDrop(
-        drop.id
-      );
-
-    if (!claimed) {
-      return;
-    }
-
-    const pickup =
-      weaponSystem.confirmPickup(
-        drop.id
-      );
-
-    if (pickup) {
-      addExplosion(
-        drop.x,
-        drop.y,
-        '#ff3b30',
-        9,
-        2
-      );
-
-      publishPlayerState(
-        true
-      );
-    }
-  } catch (error) {
-    console.error(
-      'Gun pickup failed:',
-      error
-    );
-  } finally {
-    pickupInProgress = false;
-  }
-}
-
-
-function updateGunDrops() {
-  if (!multiplayerJoined) {
-    return;
-  }
-
-  syncGunDrops();
-
-  const now =
-    Date.now();
-
-  getGunDrops().forEach(
-    (
-      drop,
-      id
-    ) => {
-      if (
-        now >=
-        drop.expiresAt
-      ) {
-        removeExpiredGunDrop(
-          id
-        );
-      }
-    }
-  );
-
-  checkGunPickup();
-}
-
-
-/* =========================================================
    PLAYER DEATH / RESPAWN
    ========================================================= */
 
@@ -903,19 +595,21 @@ function playerDestroyed(
   }
 
   /*
-   * Gun dropping is asynchronous.
-   * Player death itself remains synchronous.
+   * Gun-drop persistence is asynchronous.
+   * Player death remains synchronous.
    */
-  dropLocalGuns(
-    ship
-  ).catch(
-    (error) => {
-      console.error(
-        'Gun drop failed:',
-        error
-      );
-    }
-  );
+  gunDropSystem
+    .dropLocalGuns(
+      ship
+    )
+    .catch(
+      (error) => {
+        console.error(
+          'Gun drop failed:',
+          error
+        );
+      }
+    );
 
   suspendPlayerControls(
     playerId
@@ -985,11 +679,15 @@ function releaseMissiles() {
     world.missiles.push(
       new HomingMissile(
         world.mrK.x +
-          Math.cos(angle) *
+          Math.cos(
+            angle
+          ) *
           world.mrK.radius,
 
         world.mrK.y +
-          Math.sin(angle) *
+          Math.sin(
+            angle
+          ) *
           world.mrK.radius,
 
         angle,
@@ -1056,14 +754,16 @@ function syncRemoteShips(
             remote.name
           );
 
-        ship.remote = true;
+        ship.remote =
+          true;
 
         world.ships.push(
           ship
         );
       }
 
-      ship.remote = true;
+      ship.remote =
+        true;
 
       ship.displayName =
         remote.name;
@@ -1160,8 +860,8 @@ function fireWeapons(
     );
 
   /*
-   * Temporary diagnostic retained until the firing bug
-   * is handled in its own pass.
+   * Keep this diagnostic until the two-gun pickup/firing
+   * path is verified in the browser.
    */
   console.log(
     'FIRING:',
@@ -1185,6 +885,115 @@ function fireWeapons(
       );
     }
   );
+}
+
+
+/* =========================================================
+   GUN DROP SYSTEM
+   ========================================================= */
+
+const gunDropSystem =
+  createGunDropSystem({
+    world,
+
+    isMultiplayerJoined:
+      () =>
+        multiplayerJoined,
+
+    addExplosion,
+
+    publishPlayerState
+  });
+
+
+/* =========================================================
+   COLLISION SYSTEM
+   ========================================================= */
+
+const collisionSystem =
+  createCollisionSystem({
+    world,
+
+    getWorldWidth:
+      () =>
+        worldWidth,
+
+    getWorldHeight:
+      () =>
+        worldHeight,
+
+    destroyAsteroid,
+
+    playerDestroyed,
+
+    addExplosion,
+    addRockExplosion,
+
+    releaseMissiles,
+
+    advanceAsteroidsFromMrK,
+
+    updateScores,
+
+    publishPlayerState,
+
+    asteroidDestructionPending
+  });
+
+
+/* =========================================================
+   RESET
+   ========================================================= */
+
+function reset() {
+  world.ships = [
+    new Ship(
+      'A',
+      worldWidth * 0.5,
+      worldHeight * 0.5,
+      controls.A
+    )
+  ];
+
+  world.bullets = [];
+  world.missiles = [];
+  world.particles = [];
+
+  world.mrK = null;
+  world.mrKRespawnTimer = 0;
+
+  world.scores = {
+    A: 0
+  };
+
+  weaponSystem.reset();
+
+  asteroidDirector.reset();
+
+  /*
+   * MOSHROIDS always starts with 10 ordinary asteroids.
+   */
+  replaceAsteroidField(
+    10
+  );
+
+  spawnMrK();
+
+  camera.x =
+    worldWidth * 0.5;
+
+  camera.y =
+    worldHeight * 0.5;
+
+  camera.update(
+    world.ships,
+    width,
+    height,
+    worldWidth,
+    worldHeight
+  );
+
+  updateScores();
 }
 
 
@@ -1308,8 +1117,8 @@ function updateAsteroids(
   }
 
   /*
-   * Snapshot the collisions before asynchronous shared
-   * destruction begins modifying world.asteroids.
+   * Snapshot first because shared destruction removes
+   * asteroids asynchronously.
    */
   const safeZoneHits =
     world.asteroids.filter(
@@ -1358,7 +1167,8 @@ function updateMrK(
     dt;
 
   if (
-    world.mrKRespawnTimer <= 0
+    world.mrKRespawnTimer <=
+    0
   ) {
     spawnMrK();
   }
@@ -1386,7 +1196,8 @@ function updateMissiles(
     world.missiles.filter(
       (missile) => {
         if (
-          missile.life <= 0
+          missile.life <=
+          0
         ) {
           addExplosion(
             missile.x,
@@ -1398,7 +1209,8 @@ function updateMissiles(
         }
 
         return (
-          missile.life > 0
+          missile.life >
+          0
         );
       }
     );
@@ -1460,522 +1272,9 @@ function updateParticles(
   world.particles =
     world.particles.filter(
       (particle) =>
-        particle.life > 0
+        particle.life >
+        0
     );
-}
-
-
-/* =========================================================
-   COLLISION — BULLET → MISSILE / ASTEROID
-   ========================================================= */
-
-function resolveBulletRockCollisions() {
-  for (
-    let bulletIndex =
-      world.bullets.length - 1;
-
-    bulletIndex >= 0;
-
-    bulletIndex -= 1
-  ) {
-    const bullet =
-      world.bullets[
-        bulletIndex
-      ];
-
-    const missileIndex =
-      world.missiles.findIndex(
-        (missile) =>
-          wrappedDistance(
-            bullet,
-            missile,
-            worldWidth,
-            worldHeight
-          ) <
-          missile.radius +
-          bullet.radius
-      );
-
-    if (
-      missileIndex >= 0
-    ) {
-      world.bullets.splice(
-        bulletIndex,
-        1
-      );
-
-      const missile =
-        world.missiles.splice(
-          missileIndex,
-          1
-        )[0];
-
-      addExplosion(
-        missile.x,
-        missile.y,
-        '#ffdb69',
-        7,
-        3
-      );
-
-      continue;
-    }
-
-    const asteroidIndex =
-      world.asteroids.findIndex(
-        (asteroid) =>
-          !asteroidDestructionPending.has(
-            asteroid.id
-          ) &&
-
-          wrappedDistance(
-            bullet,
-            asteroid,
-            worldWidth,
-            worldHeight
-          ) <
-          asteroid.radius +
-          bullet.radius
-      );
-
-    if (
-      asteroidIndex < 0
-    ) {
-      continue;
-    }
-
-    const asteroid =
-      world.asteroids[
-        asteroidIndex
-      ];
-
-    world.bullets.splice(
-      bulletIndex,
-      1
-    );
-
-    const asteroidId =
-      asteroid.id;
-
-    const asteroidPoints =
-      asteroid.points;
-
-    destroyAsteroid(
-      asteroid,
-
-      bullet.owner === 'A'
-        ? '#ff875f'
-        : '#72e6dd'
-    )
-      .then(
-        (
-          wonDestruction
-        ) => {
-          if (
-            wonDestruction &&
-            bullet.owner === 'A'
-          ) {
-            world.scores.A +=
-              asteroidPoints;
-
-            updateScores();
-
-            publishPlayerState(
-              true
-            );
-          }
-        }
-      )
-      .catch(
-        (error) => {
-          console.error(
-            `Failed to destroy ${asteroidId}:`,
-            error
-          );
-        }
-      );
-  }
-}
-
-
-/* =========================================================
-   COLLISION — BULLET → MR. K
-   ========================================================= */
-
-function resolveBulletMrKCollisions() {
-  if (!world.mrK) {
-    return;
-  }
-
-  for (
-    let bulletIndex =
-      world.bullets.length - 1;
-
-    bulletIndex >= 0;
-
-    bulletIndex -= 1
-  ) {
-    const bullet =
-      world.bullets[
-        bulletIndex
-      ];
-
-    if (
-      wrappedDistance(
-        bullet,
-        world.mrK,
-        worldWidth,
-        worldHeight
-      ) >=
-      world.mrK.radius +
-      bullet.radius
-    ) {
-      continue;
-    }
-
-    world.bullets.splice(
-      bulletIndex,
-      1
-    );
-
-    world.mrK.damage(
-      1
-    );
-
-    if (
-      world.scores[
-        bullet.owner
-      ] !== undefined
-    ) {
-      world.scores[
-        bullet.owner
-      ] += 1;
-
-      updateScores();
-    }
-
-    addExplosion(
-      bullet.x,
-      bullet.y,
-
-      bullet.owner === 'A'
-        ? '#ff875f'
-        : '#72e6dd',
-
-      2,
-      2
-    );
-
-    if (
-      world.mrK.health !== 0
-    ) {
-      continue;
-    }
-
-    const mrKX =
-      world.mrK.x;
-
-    const mrKY =
-      world.mrK.y;
-
-    /*
-     * releaseMissiles() needs the live MR. K object.
-     */
-    releaseMissiles();
-
-    addRockExplosion(
-      mrKX,
-      mrKY
-    );
-
-    advanceAsteroidsFromMrK();
-
-    world.mrK = null;
-
-    world.mrKRespawnTimer =
-      60;
-
-    /*
-     * MR. K no longer exists.
-     * Stop testing remaining bullets against it this frame.
-     */
-    break;
-  }
-}
-
-
-/* =========================================================
-   COLLISION — BULLET → PLAYER
-   ========================================================= */
-
-function resolveBulletPlayerCollisions() {
-  for (
-    let bulletIndex =
-      world.bullets.length - 1;
-
-    bulletIndex >= 0;
-
-    bulletIndex -= 1
-  ) {
-    const bullet =
-      world.bullets[
-        bulletIndex
-      ];
-
-    const target =
-      world.ships.find(
-        (ship) =>
-          ship.owner !==
-            bullet.owner &&
-
-          ship.visible &&
-
-          wrappedDistance(
-            bullet,
-            ship,
-            worldWidth,
-            worldHeight
-          ) <
-          ship.radius +
-          bullet.radius
-      );
-
-    if (!target) {
-      continue;
-    }
-
-    world.bullets.splice(
-      bulletIndex,
-      1
-    );
-
-    if (
-      target.owner === 'A' &&
-      playerDestroyed(
-        'A',
-        'enemy-bullet'
-      )
-    ) {
-      addExplosion(
-        target.x,
-        target.y,
-        '#ff875f',
-        22
-      );
-    }
-  }
-}
-
-
-/* =========================================================
-   COLLISION — MISSILES
-   ========================================================= */
-
-function resolveMissileCollisions() {
-  for (
-    let missileIndex =
-      world.missiles.length - 1;
-
-    missileIndex >= 0;
-
-    missileIndex -= 1
-  ) {
-    const missile =
-      world.missiles[
-        missileIndex
-      ];
-
-    const rockHit =
-      !missile.outbound &&
-      (
-        world.asteroids.some(
-          (asteroid) =>
-            wrappedDistance(
-              missile,
-              asteroid,
-              worldWidth,
-              worldHeight
-            ) <
-            asteroid.radius +
-            missile.radius
-        ) ||
-
-        (
-          world.mrK &&
-
-          wrappedDistance(
-            missile,
-            world.mrK,
-            worldWidth,
-            worldHeight
-          ) <
-          world.mrK.radius +
-          missile.radius
-        )
-      );
-
-    if (rockHit) {
-      world.missiles.splice(
-        missileIndex,
-        1
-      );
-
-      addExplosion(
-        missile.x,
-        missile.y,
-        '#ffdb69',
-        7,
-        3
-      );
-
-      continue;
-    }
-
-    const target =
-      world.ships.find(
-        (ship) =>
-          ship.owner === 'A' &&
-          ship.visible &&
-
-          wrappedDistance(
-            missile,
-            ship,
-            worldWidth,
-            worldHeight
-          ) <
-          ship.radius +
-          missile.radius
-      );
-
-    if (!target) {
-      continue;
-    }
-
-    world.missiles.splice(
-      missileIndex,
-      1
-    );
-
-    if (
-      playerDestroyed(
-        'A',
-        'mr-k-missile'
-      )
-    ) {
-      addExplosion(
-        target.x,
-        target.y,
-        '#ff875f',
-        22
-      );
-    }
-  }
-}
-
-
-/* =========================================================
-   COLLISION — LOCAL SHIP → ROCKS
-   ========================================================= */
-
-function resolveLocalShipRockCollisions() {
-  const localShip =
-    world.ships.find(
-      (ship) =>
-        ship.owner === 'A'
-    );
-
-  if (
-    !localShip ||
-    !localShip.visible
-  ) {
-    return;
-  }
-
-  const asteroid =
-    world.asteroids.find(
-      (candidate) =>
-        wrappedDistance(
-          localShip,
-          candidate,
-          worldWidth,
-          worldHeight
-        ) <
-        candidate.radius +
-        (
-          localShip.radius ??
-          11
-        )
-    );
-
-  /*
-   * Ordinary asteroid collision:
-   *
-   * ship dies
-   * asteroid survives
-   */
-  if (
-    asteroid &&
-    playerDestroyed(
-      'A',
-      'asteroid'
-    )
-  ) {
-    addExplosion(
-      localShip.x,
-      localShip.y,
-      '#ff875f',
-      22
-    );
-
-    /*
-     * playerDestroyed() makes the local ship non-active.
-     * Do not then process MR. K against the same death.
-     */
-    return;
-  }
-
-  if (
-    !world.mrK ||
-    !localShip.visible
-  ) {
-    return;
-  }
-
-  /*
-   * MR. K is solid and lethal.
-   *
-   * Flying into MR. K destroys the ship.
-   * MR. K itself takes no collision damage.
-   */
-  if (
-    wrappedDistance(
-      localShip,
-      world.mrK,
-      worldWidth,
-      worldHeight
-    ) >=
-    world.mrK.radius +
-    (
-      localShip.radius ??
-      11
-    )
-  ) {
-    return;
-  }
-
-  if (
-    playerDestroyed(
-      'A',
-      'mr-k-collision'
-    )
-  ) {
-    addExplosion(
-      localShip.x,
-      localShip.y,
-      '#ff875f',
-      22
-    );
-  }
 }
 
 
@@ -1992,7 +1291,7 @@ function update(
 
   syncDestroyedAsteroids();
 
-  updateGunDrops();
+  gunDropSystem.update();
 
   updateShips(
     dt
@@ -2018,15 +1317,11 @@ function update(
     dt
   );
 
-  resolveBulletRockCollisions();
-
-  resolveBulletMrKCollisions();
-
-  resolveBulletPlayerCollisions();
-
-  resolveMissileCollisions();
-
-  resolveLocalShipRockCollisions();
+  /*
+   * All gameplay collision resolution now lives outside
+   * game.js.
+   */
+  collisionSystem.resolve();
 
   camera.update(
     world.ships,
@@ -2340,7 +1635,8 @@ bindPilotLogin(
         0,
 
       visible:
-        ship?.visible !== false,
+        ship?.visible !==
+        false,
 
       score:
         world.scores.A,
@@ -2527,16 +1823,6 @@ window.addEventListener(
    RESIZE
    ========================================================= */
 
-/*
- * Resize the current world without resetting the game.
- *
- * IMPORTANT:
- *
- * Do NOT call reset() here.
- *
- * reset() intentionally starts a new game and resets the
- * synchronized asteroid director.
- */
 window.addEventListener(
   'resize',
 
