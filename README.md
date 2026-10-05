@@ -9,7 +9,7 @@ MOSHROIDS is a browser-based multiplayer classroom Asteroids game. Players enter
 - `src/asteroid.js`, `src/asteroidDirector.js`, `src/asteroidMultiplayer.js`, `src/asteroidNetwork.js`: asteroid entity, field generation, shared destruction coordination, and Firebase transport.
 - `src/sharedClock.js`, `src/worldConfig.js`: Firebase server-time offset and fixed shared arena dimensions. Asteroid positions are derived from immutable spawn state and shared time; no position frames are sent to Firebase.
 - `src/asteroidDirector.js` derives normal field size as 10 × 2^MR. K destructions in the current shared epoch. The existing Firebase MR. K destruction record advances the generation once, and late joins replay those records to recover the same field. Time tiers still set replacement timing.
-- `src/multiplayer.js`: Firebase authentication, player presence, and pilot login.
+- `src/transport/firebase-adapter.js`: active Firebase authentication, player presence, and pilot-login transport. `src/transport/index.js` is the provider-neutral import boundary used by game orchestration.
 - `src/gunDropSystem.js`, `src/gunDropMultiplayer.js`: gun drop gameplay and networking.
 - Other `src/` modules own the corresponding physics, entities, collisions, spelling, and weapons.
 - `src/gameMode.js` routes `/` to Classic, `/1vw/` to One vs World, and `/teams/` to Teams. All pages load `src/game.js` and use separate Firebase rooms (`classroom`, `classroom-1vw`, and `classroom-teams`).
@@ -34,8 +34,14 @@ Run `node --test tests/teams.mjs` for Teams routing, base geometry/contact, team
 
 ## Deployment
 
-GitHub Pages serves the root of the `main` branch at https://mrjkirby.github.io/classroom-flap-moshroids/. The browser loads `src/game.js` directly from `index.html`, so imported filenames must match tracked files exactly, including case. Firebase hosts anonymous authentication and the multiplayer room; its public client configuration is in `src/multiplayer.js`.
+GitHub Pages serves the root of the `main` branch at https://mrjkirby.github.io/classroom-flap-moshroids/. The browser loads `src/game.js` directly from `index.html`, so imported filenames must match tracked files exactly, including case. Firebase hosts anonymous authentication and the multiplayer room; its public client configuration is in `src/transport/firebase-adapter.js`.
 
 GitHub Pages serves `1vw/index.html` directly at https://mrjkirby.github.io/classroom-flap-moshroids/1vw/, including direct visits and refreshes. 1VW requires the existing Firebase `bossState`, player, gun-drop, and asteroid write boundaries to be enabled for the separate `classroom-1vw` room. If database rules deny access, login fails closed.
 
 GitHub Pages serves `teams/index.html` directly at https://mrjkirby.github.io/classroom-flap-moshroids/teams/, including direct visits and refreshes. Teams uses the existing authenticated player write boundary in the separate `classroom-teams` room. If database rules deny access, login fails closed.
+
+## KNAS realtime preparation
+
+`server/` contains a small, isolated, **pre-production** WebSocket server that was prepared for a future KNAS migration. It is intentionally not connected to this browser client and does not replace Firebase. It holds transient match state in memory, protects duplicate/stale clients, exposes `GET /health`, and requires an injected server-side access-token verifier plus an allow-list of exact HTTPS origins. See [`server/README.md`](server/README.md) and run `node --test server/test/*.test.mjs` for its focused protocol and 26-concurrent-client tests.
+
+Firebase remains authoritative for all currently deployed MOSHROIDS multiplayer rooms. Do not deploy the server or point a public client at it until the documented token-verification and secure reverse-proxy prerequisites have been completed.

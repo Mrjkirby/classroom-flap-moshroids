@@ -34,7 +34,7 @@ import {
   publishTeamChange,
   publishTeamVolley,
   updateRemotePlayers
-} from './multiplayer.js';
+} from './transport/index.js';
 
 
 /* =========================================================

@@ -9,7 +9,7 @@ import {
 
 import {
   getLocalIdentity
-} from './multiplayer.js';
+} from './transport/index.js';
 
 
 const MAX_GUNS = 40;

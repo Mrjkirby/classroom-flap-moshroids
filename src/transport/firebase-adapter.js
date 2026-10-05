@@ -58,19 +58,19 @@ import {
   configureGunDropMultiplayer,
   startGunDropListener,
   stopGunDropListener
-} from './gunDropMultiplayer.js';
-import { ROOM_PATH, IS_ONE_VS_WORLD, IS_TEAMS } from './gameMode.js';
-import { teamAtBase } from './teams/teamBases.js';
-import { normalizeTeam } from './teams/teamRules.js';
-import { WORLD_WIDTH, WORLD_HEIGHT } from './worldConfig.js';
-import { configureGauntletNetwork, startGauntletListener, stopGauntletListener } from './gauntlet/network.js';
+} from '../gunDropMultiplayer.js';
+import { ROOM_PATH, IS_ONE_VS_WORLD, IS_TEAMS } from '../gameMode.js';
+import { teamAtBase } from '../teams/teamBases.js';
+import { normalizeTeam } from '../teams/teamRules.js';
+import { WORLD_WIDTH, WORLD_HEIGHT } from '../worldConfig.js';
+import { configureGauntletNetwork, startGauntletListener, stopGauntletListener } from '../gauntlet/network.js';
 
 import {
   configureAsteroidNetwork,
   startAsteroidListener,
   stopAsteroidListener
-} from './asteroidNetwork.js';
-import { sharedClock } from './sharedClock.js';
+} from '../asteroidNetwork.js';
+import { sharedClock } from '../sharedClock.js';
 
 
 /* =========================================================
