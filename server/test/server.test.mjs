@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import test from 'node:test';
 import { createMoshroidsServer } from '../src/app.mjs';
 
@@ -49,13 +50,47 @@ test('health, authenticated join, authoritative time, and player state', async (
     const first = await client(url, 'test:a');
     const welcome = await first.wait('welcome');
     assert.equal(welcome.studentId, 'a'); assert.ok(Number.isFinite(welcome.serverNow));
-    first.socket.send(JSON.stringify({ type: 'state', state: { x: 12, y: 13, angle: 1, velocityX: 2, velocityY: 3, score: 4, guns: 5 } }));
+    first.socket.send(JSON.stringify({ type: 'state', state: { x: 12, y: 13, angle: 1, velocityX: 2, velocityY: 3, score: 999999, guns: 40 } }));
     const second = await client(url, 'test:b');
     const snapshot = await second.wait('welcome');
     assert.equal(snapshot.players.find(player => player.id === 'a').x, 12);
+    assert.equal(snapshot.players.find(player => player.id === 'a').score, 0, 'a client cannot choose score');
+    assert.equal(snapshot.players.find(player => player.id === 'a').guns, 0, 'a client cannot choose guns');
     const status = await (await fetch(health)).json();
     assert.deepEqual({ ok: status.ok, connections: status.connections }, { ok: true, connections: 2 });
     first.socket.close(); second.socket.close();
+  } finally { await app.close(); }
+});
+
+test('rejects unexpected browser origins before accepting a WebSocket', async () => {
+  const app = createMoshroidsServer({
+    allowedOrigins: ['https://mrjkirby.github.io'],
+    authenticate: async () => ({ studentId: 'a', displayName: 'A' }),
+  });
+  const address = await app.listen();
+  try {
+    const response = await new Promise((resolve, reject) => {
+      const socket = net.connect(address.port, '127.0.0.1');
+      socket.once('connect', () => socket.write([
+        'GET /ws HTTP/1.1', 'Host: localhost', 'Connection: Upgrade', 'Upgrade: websocket',
+        'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        'Origin: https://unexpected.example', '', '',
+      ].join('\r\n')));
+      socket.once('data', data => { socket.destroy(); resolve(data.toString()); });
+      socket.once('error', reject);
+    });
+    assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
+  } finally { await app.close(); }
+});
+
+test('malformed messages close an authenticated connection', async () => {
+  const { app, url } = await start();
+  try {
+    const player = await client(url, 'test:a');
+    await player.wait('welcome');
+    const close = new Promise(resolve => player.socket.addEventListener('close', event => resolve(event.code), { once: true }));
+    player.socket.send('{not json');
+    assert.equal(await close, 1007);
   } finally { await app.close(); }
 });
 

@@ -50,9 +50,6 @@ export function normalizeState(value) {
     velocityX: finiteNumber(value.velocityX),
     velocityY: finiteNumber(value.velocityY),
     visible: value.visible !== false,
-    score: Math.max(0, finiteNumber(value.score)),
-    guns: Math.max(0, Math.min(40, Math.floor(finiteNumber(value.guns)))),
-    team: ['neutral', 'red', 'blue'].includes(value.team) ? value.team : 'neutral',
   };
 }
 
