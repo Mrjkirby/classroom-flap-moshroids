@@ -45,3 +45,11 @@ GitHub Pages serves `teams/index.html` directly at https://mrjkirby.github.io/cl
 `server/` contains a small, isolated, **pre-production** WebSocket server that was prepared for a future KNAS migration. It is intentionally not connected to this browser client and does not replace Firebase. It holds transient match state in memory, protects duplicate/stale clients, exposes `GET /health`, and requires an injected server-side access-token verifier plus an allow-list of exact HTTPS origins. See [`server/README.md`](server/README.md) and run `node --test server/test/*.test.mjs` for its focused protocol and 26-concurrent-client tests.
 
 Firebase remains authoritative for all currently deployed MOSHROIDS multiplayer rooms. Do not deploy the server or point a public client at it until the documented token-verification and secure reverse-proxy prerequisites have been completed.
+
+The pre-production server now consumes single-use, 60-second classroom grants
+through an authenticated server-to-server verifier and issues bounded rotating
+reconnect credentials. The existing EDU compatibility service owns grant issuance
+and atomic D1 consumption; LLP remains the classroom identity authority. Local
+26-client authentication tests passed; no public client/provider switch, live
+secrets, KNAS ingress configuration or deployment is included. See the server
+README for contracts, limitations and the cross-repository verification command.

@@ -1,73 +1,46 @@
-import { createHash } from 'node:crypto';
+import { roomMode } from '../protocol.mjs';
 
-const MAX_TOKEN_LENGTH = 4_096;
-const MIN_REMAINING_LIFETIME_MS = 1_000;
-
-function asText(value, maximum = 160) {
-  return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
-}
-
-function tokenHash(token) {
-  return createHash('sha256').update(token).digest('base64url');
-}
-
-function validEndpoint(value) {
-  const endpoint = new URL(value);
-  if (endpoint.protocol !== 'https:') throw new Error('MOSHROIDS token verification must use HTTPS.');
-  return endpoint;
-}
-
-/**
- * Verifies a browser-presented, one-time MOSHROIDS token with the existing
- * classroom identity service. The browser never receives a verifier secret.
- *
- * The identity service must consume the token atomically and respond with:
- * { ok, consumed: true, audience: 'moshroids', tokenId, expiresAt,
- *   student: { id, loginName, active: true } }
- */
-export function createRemoteTokenVerifier({
-  endpoint,
-  audience = 'moshroids',
-  fetcher = globalThis.fetch,
-  clock = () => Date.now(),
-} = {}) {
-  const url = validEndpoint(endpoint);
-  if (typeof fetcher !== 'function') throw new Error('A fetch implementation is required.');
-  const accepted = new Map();
-
+// The classroom D1 DELETE/RETURNING, not process-local memory, owns replay protection.
+export function createRemoteTokenVerifier({ endpoint, serviceSecret,
+  fetcher = globalThis.fetch, clock = () => Date.now() } = {}) {
+  const url = new URL(endpoint);
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    throw new Error('MOSHROIDS token verification must use a credential-free HTTPS endpoint.');
+  }
+  if (!/^[a-f0-9]{64}$/.test(serviceSecret || '')) throw new Error('A server-only MOSHROIDS service secret is required.');
   return async function verifyMoshroidsToken({ accessToken, roomId }) {
-    const token = asText(accessToken, MAX_TOKEN_LENGTH + 1);
-    if (!token || token.length > MAX_TOKEN_LENGTH) throw new Error('Invalid MOSHROIDS access token.');
-    const fingerprint = tokenHash(token);
-    const previousExpiry = accepted.get(fingerprint);
-    if (previousExpiry && previousExpiry > clock()) throw new Error('MOSHROIDS access token was already used.');
-    if (previousExpiry) accepted.delete(fingerprint);
-
-    let response;
+    if (typeof accessToken !== 'string' || !/^ml1_[a-f0-9]{64}$/.test(accessToken) || !roomMode(roomId)) {
+      throw new Error('Invalid MOSHROIDS access token or room.');
+    }
+    let response, body;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4_000);
     try {
       response = await fetcher(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ action: 'moshroidsVerifySession', accessToken: token, audience, roomId }),
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { 'content-type': 'application/json', accept: 'application/json',
+          authorization: 'Bearer ' + serviceSecret },
+        body: JSON.stringify({ action: 'moshroidsVerifySession', accessToken, audience: 'moshroids', roomId }),
       });
+      body = await response.json();
     } catch {
       throw new Error('MOSHROIDS identity service is unavailable.');
-    }
-
-    let body;
-    try { body = await response.json(); } catch { throw new Error('MOSHROIDS identity service returned invalid data.'); }
-    if (!response.ok || !body || body.ok !== true || body.consumed !== true || body.audience !== audience) {
-      throw new Error('MOSHROIDS access token was rejected.');
-    }
-    const expiresAt = new Date(asText(body.expiresAt, 64)).getTime();
-    const tokenId = asText(body.tokenId, 160);
-    const studentId = asText(body.student?.id, 96);
-    const displayName = asText(body.student?.loginName, 32);
-    if (!tokenId || !studentId || !displayName || body.student?.active !== true ||
-      !Number.isFinite(expiresAt) || expiresAt - clock() < MIN_REMAINING_LIFETIME_MS) {
+    } finally { clearTimeout(timer); }
+    const issuedAt = Date.parse(body?.issuedAt);
+    const expiresAt = Date.parse(body?.expiresAt);
+    const studentId = body?.student?.id;
+    const displayName = body?.student?.loginName;
+    if (!response.ok || body?.ok !== true || body.consumed !== true || body.audience !== 'moshroids' ||
+      body.roomId !== roomId || typeof body.tokenId !== 'string' || !body.tokenId ||
+      !Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || issuedAt > clock() + 1000 ||
+      expiresAt <= clock() || expiresAt - issuedAt > 60_000 || expiresAt <= issuedAt ||
+      typeof body.testerAuthorized !== 'boolean' || body.student?.active !== true ||
+      typeof studentId !== 'string' || !studentId || studentId.length > 96 ||
+      typeof displayName !== 'string' || !displayName.trim() || displayName.length > 32 ||
+      /[\u0000-\u001f<>]/.test(studentId + displayName) ||
+      (body.testerAuthorized !== (studentId === 'supermrkirby-test-player'))) {
       throw new Error('MOSHROIDS identity response was not valid.');
     }
-    accepted.set(fingerprint, expiresAt);
-    return { studentId, displayName };
+    return { studentId, displayName, testerAuthorized: body.testerAuthorized };
   };
 }
