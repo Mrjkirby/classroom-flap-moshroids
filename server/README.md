@@ -1,6 +1,9 @@
 # MOSHROIDS realtime server (pre-production)
 
-This is an isolated WebSocket server preparation for MOSHROIDS. It is **not** wired into the GitHub Pages client. The classroom one-time grant integration is locally tested; secrets, secure ingress, public launch wiring and production parity verification are still required before replacing Firebase.
+This isolated WebSocket relay is wired through the optional KNAS browser adapter.
+Firebase remains the public default. The KNAS container is deployed in explicit
+deny-all standby: secrets, issuer release, secure ingress and real classroom
+launch wiring still gate public cutover. See [the audit](TRANSPORT-AUDIT.md).
 
 ## Ownership
 
@@ -10,6 +13,9 @@ This is an isolated WebSocket server preparation for MOSHROIDS. It is **not** wi
 - `src/websocket.mjs`: small RFC 6455 text-frame transport; no gameplay rules.
 - `src/protocol.mjs`: bounded untrusted-message parsing and current room identifiers.
 - `src/match.mjs`: authoritative in-memory room/player/event state, duplicate protection, stale cleanup, and first-writer claims.
+- `src/shared-state.mjs`: sole shared claim/drop/boss authority, existing Teams and
+  gauntlet rules, chunked late-join snapshots. Player physics/score/gun-count
+  reports remain local, bounded and attributed only to the authenticated sender.
 
 The server intentionally persists no frame data and starts with empty matches after a restart. Clients must re-authenticate and rejoin. Firebase remains the live transport and source of current room state.
 
@@ -33,4 +39,26 @@ Run `node --test server/test/*.test.mjs`. Standalone tests bind to loopback and 
 
 1. Release the verified classroom issuer and configure matching private service secrets through the existing deployment workflow (not performed in this pass).
 2. A dedicated HTTPS hostname and Synology reverse-proxy WebSocket route must be configured with the exact GitHub Pages origin allowed. Do not expose a raw NAS port to the Internet.
-3. The existing client must gain a tested WebSocket transport adapter while retaining the Firebase adapter for rollback.
+3. Supply the existing authenticated launch through the tested browser adapter;
+   verify the public game before changing the default provider.
+
+## Isolated KNAS deployment
+
+From this repository root, `docker compose -p moshroids -f server/compose.yaml
+up -d --build` manages only `moshroids-realtime`. The image copies server and game
+pure-rule modules, runs as non-root with a read-only filesystem, and publishes
+**only 127.0.0.1:8794**. Never change the bind to public 0.0.0.0 on the NAS host.
+Container-internal bind is 0.0.0.0 so the loopback host mapping can reach it.
+TIMEZ 8793 and other containers are not dependencies and must not be changed.
+
+`MOSHROIDS_STANDBY=true` explicitly rejects every classroom authentication and
+reports `classroomReady:false` at `/health`. Production activation requires
+`MOSHROIDS_STANDBY=false` plus the existing verifier URL and matching private
+service secret; missing configuration then fails startup. Do not commit secrets.
+`MOSHROIDS_ALLOWED_ORIGINS` stays `https://mrjkirby.github.io`.
+
+`docker exec moshroids-realtime node server/test/performance.mjs` runs a separate
+loopback fixture server and 26 synthetic clients inside the NAS container. It
+reports server-process CPU/RSS, aggregate traffic, action latency, claims/state
+agreement and reconnect for each mode; it never calls production LLP/Firebase.
+This is hardware capacity evidence, not public WSS or real student-login proof.

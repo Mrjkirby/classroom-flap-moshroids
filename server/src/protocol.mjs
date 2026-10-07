@@ -50,6 +50,10 @@ export function normalizeState(value) {
     velocityX: finiteNumber(value.velocityX),
     velocityY: finiteNumber(value.velocityY),
     visible: value.visible !== false,
+    // These are the authenticated player's own local gameplay reports, as in
+    // Firebase. They never authorize identity, tester mode or another player.
+    score: Number.isInteger(value.score) && value.score >= 0 && value.score <= 100000 ? value.score : 0,
+    guns: Number.isInteger(value.guns) && value.guns >= 1 && value.guns <= 40 ? value.guns : 1,
   };
 }
 
@@ -58,5 +62,6 @@ export function normalizeEvent(value) {
   const kind = safeText(value.kind, 40);
   if (!['asteroidDestroyed', 'gunDropPublished', 'gunDropClaimed', 'teamVolley', 'gauntletAction', 'bullet', 'collision', 'reset'].includes(kind)) return null;
   const id = safeText(value.id, 80);
-  return { kind, id, payload: value.payload && typeof value.payload === 'object' && !Array.isArray(value.payload) ? value.payload : {} };
+  // Legacy diagnostic events carry no client-provided authoritative state.
+  return { kind, id, payload: {} };
 }

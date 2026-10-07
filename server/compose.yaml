@@ -1,0 +1,26 @@
+services:
+  moshroids-realtime:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: moshroids-realtime:local
+    container_name: moshroids-realtime
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8794:8794"
+    environment:
+      MOSHROIDS_ALLOWED_ORIGINS: https://mrjkirby.github.io
+      MOSHROIDS_STANDBY: ${MOSHROIDS_STANDBY:-true}
+      MOSHROIDS_AUTH_VERIFY_URL: ${MOSHROIDS_AUTH_VERIFY_URL:-}
+      MOSHROIDS_SERVICE_SECRET: ${MOSHROIDS_SERVICE_SECRET:-}
+    mem_limit: 192m
+    cpu_shares: 256
+    pids_limit: 64
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

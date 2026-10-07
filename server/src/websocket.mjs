@@ -25,7 +25,9 @@ export function acceptWebSocket(request, socket, head, { onMessage, onClose }) {
     send(value) {
       if (closed || socket.destroyed) return;
       const body = Buffer.from(JSON.stringify(value));
-      if (body.length > MAX_FRAME_BYTES) return;
+      if (body.length > 65000 || socket.writableLength > 1024 * 1024) {
+        connection.close(1009, 'Snapshot or slow-client buffer exceeded.'); return;
+      }
       const header = body.length < 126
         ? Buffer.from([0x81, body.length])
         : Buffer.from([0x81, 126, body.length >> 8, body.length & 0xff]);
@@ -39,6 +41,9 @@ export function acceptWebSocket(request, socket, head, { onMessage, onClose }) {
       detail.copy(body, 2);
       socket.write(Buffer.concat([Buffer.from([0x88, body.length]), body]));
       socket.end();
+      // Bound the closing handshake even if the peer never finishes its half.
+      const closingTimer = setTimeout(() => socket.destroy(), 250).unref();
+      socket.once('close', () => clearTimeout(closingTimer));
       closeOnce();
     },
   };

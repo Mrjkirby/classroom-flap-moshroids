@@ -55,7 +55,7 @@ test('health, authenticated join, authoritative time, and player state', async (
     const snapshot = await second.wait('welcome');
     assert.equal(snapshot.players.find(player => player.id === 'a').x, 12);
     assert.equal(snapshot.players.find(player => player.id === 'a').score, 0, 'a client cannot choose score');
-    assert.equal(snapshot.players.find(player => player.id === 'a').guns, 0, 'a client cannot choose guns');
+    assert.equal(snapshot.players.find(player => player.id === 'a').guns, 40, 'local weapon count is a bounded self-report, matching the existing Firebase game');
     const status = await (await fetch(health)).json();
     assert.deepEqual({ ok: status.ok, connections: status.connections }, { ok: true, connections: 2 });
     first.socket.close(); second.socket.close();
@@ -118,8 +118,9 @@ test('first writer wins asteroid claims and gun drop claims', async () => {
   const { app, url } = await start();
   try {
     const a = await client(url, 'test:a'); const b = await client(url, 'test:b'); await Promise.all([a.wait('welcome'), b.wait('welcome')]);
-    a.socket.send(JSON.stringify({ type: 'event', event: { kind: 'asteroidDestroyed', id: 'asteroid-1' } })); await waitForEvent(b, 'asteroidDestroyed');
-    b.socket.send(JSON.stringify({ type: 'event', event: { kind: 'asteroidDestroyed', id: 'asteroid-1' } }));
+    const asteroidId = `epoch-${Math.floor(Date.now() / 1800000)}-field-0-asteroid-1`;
+    a.socket.send(JSON.stringify({ type: 'event', event: { kind: 'asteroidDestroyed', id: asteroidId } })); await waitForEvent(b, 'asteroidDestroyed');
+    b.socket.send(JSON.stringify({ type: 'event', event: { kind: 'asteroidDestroyed', id: asteroidId } }));
     const rejected = await b.wait('eventRejected'); assert.equal(rejected.kind, 'asteroidDestroyed');
     a.socket.send(JSON.stringify({ type: 'event', event: { kind: 'gunDropPublished', id: 'drop-1' } }));
     await waitForEvent(b, 'gunDropPublished');

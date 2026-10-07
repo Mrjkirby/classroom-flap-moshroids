@@ -40,16 +40,36 @@ GitHub Pages serves `1vw/index.html` directly at https://mrjkirby.github.io/clas
 
 GitHub Pages serves `teams/index.html` directly at https://mrjkirby.github.io/classroom-flap-moshroids/teams/, including direct visits and refreshes. Teams uses the existing authenticated player write boundary in the separate `classroom-teams` room. If database rules deny access, login fails closed.
 
-## KNAS realtime preparation
+## KNAS realtime transport (gated; Firebase still default)
 
-`server/` contains a small, isolated, **pre-production** WebSocket server that was prepared for a future KNAS migration. It is intentionally not connected to this browser client and does not replace Firebase. It holds transient match state in memory, protects duplicate/stale clients, exposes `GET /health`, and requires an injected server-side access-token verifier plus an allow-list of exact HTTPS origins. See [`server/README.md`](server/README.md) and run `node --test server/test/*.test.mjs` for its focused protocol and 26-concurrent-client tests.
+`src/transport/config.js` selects `firebase` (default) or `knas`. All player,
+asteroid/MR. K, drop, Teams and 1VW networking follows this selector. KNAS mode
+does not import Firebase; rollback adapters retain the existing implementation.
+Rendering, local physics, collisions, weapons, spelling and questions remain in
+the browser. `connection.js` owns the socket, in-memory credentials, heartbeat,
+bounded reconnect and request acknowledgements; `knas-store.js` owns replicated
+caches; `knas-player.js` and `knas-shared.js` adapt the existing game interfaces.
 
-Firebase remains authoritative for all currently deployed MOSHROIDS multiplayer rooms. Do not deploy the server or point a public client at it until the documented token-verification and secure reverse-proxy prerequisites have been completed.
+The selected KNAS configuration requires `websocketUrl` and a
+`requestLaunch(roomId)` callback returning a fresh grant from the existing
+classroom session. The server, not that callback, authorizes identity. No PIN,
+identity override, service secret or token belongs in a URL. Missing launch
+configuration fails closed, never falls back to anonymous identity.
 
-The pre-production server now consumes single-use, 60-second classroom grants
-through an authenticated server-to-server verifier and issues bounded rotating
-reconnect credentials. The existing EDU compatibility service owns grant issuance
-and atomic D1 consumption; LLP remains the classroom identity authority. Local
-26-client authentication tests passed; no public client/provider switch, live
-secrets, KNAS ingress configuration or deployment is included. See the server
-README for contracts, limitations and the cross-repository verification command.
+An isolated `moshroids-realtime` container runs on KNAS loopback **127.0.0.1:8794**
+in deny-all standby while issuer/launcher release and public WSS are incomplete.
+No existing KNAS service was repurposed. See [server setup](server/README.md) and
+[operation inventory, measurements and release gate](server/TRANSPORT-AUDIT.md).
+
+Verification commands:
+
+```sh
+node --experimental-vm-modules --test server/test/*.test.mjs tests/*.mjs
+node server/test/performance.mjs
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.js CHROME_PATH=/absolute/path/to/chrome node tools/verify-transport-browser.mjs
+```
+
+There is no transpilation/typecheck build in this native-JavaScript repository;
+the import-graph check validates syntax, static/dynamic local paths and exports.
+Browser tests exercise the actual three game pages and prove no Firebase requests
+in KNAS mode, using isolated synthetic grants. They do not write classroom data.

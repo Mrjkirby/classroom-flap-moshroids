@@ -1,4 +1,5 @@
 import { normalizeEvent, normalizeState, roomMode } from './protocol.mjs';
+import { SharedState } from './shared-state.mjs';
 
 const STALE_AFTER_MS = 30_000;
 const EVENT_LIMIT = 200;
@@ -14,19 +15,19 @@ export class Match {
     this.clients = new Map();
     this.players = new Map();
     this.events = [];
-    this.asteroids = new Set();
-    this.gunDrops = new Map();
+    this.shared = new SharedState(this);
   }
 
   snapshot() {
     return {
       roomId: this.roomId, mode: this.mode, serverNow: this.clock(),
-      players: [...this.players.values()].map(player => ({ ...player })),
+      players: [...this.players.values()].map(player => ({ ...player, teamShots: [] })),
       events: this.events.slice(-EVENT_LIMIT),
     };
   }
 
   join(session, socket) {
+    if (!this.clients.has(session.studentId) && this.clients.size >= 64) return socket.close(4004, 'Room is full.');
     const existing = this.clients.get(session.studentId);
     if (existing && existing.socket !== socket) existing.socket.close(4001, 'Replaced by a newer connection.');
     const player = this.players.get(session.studentId) || {
@@ -36,8 +37,12 @@ export class Match {
     player.name = session.displayName;
     player.updatedAt = this.clock();
     this.players.set(session.studentId, player);
-    this.clients.set(session.studentId, { socket, lastSeenAt: this.clock(), stateWindowAt: 0, stateCount: 0, eventWindowAt: 0, eventCount: 0 });
+    this.clients.set(session.studentId, { socket, testerAuthorized: session.testerAuthorized === true, lastSeenAt: this.clock(), stateWindowAt: 0, stateCount: 0, eventWindowAt: 0, eventCount: 0 });
     socket.send({ type: 'welcome', studentId: session.studentId, ...this.snapshot() });
+    for (const current of this.players.values()) if (current.teamShots?.length)
+      socket.send({ type: 'playerState', player: { ...current }, serverNow: this.clock() });
+    this.shared.snapshot(socket);
+    socket.send({ type: 'ready', serverNow: this.clock() });
     this.broadcast({ type: 'playerJoined', player: { ...player }, serverNow: this.clock() }, session.studentId);
   }
 
@@ -54,7 +59,16 @@ export class Match {
     const player = this.players.get(studentId);
     if (!client || !player) return;
     client.lastSeenAt = this.clock();
-    if (value.type === 'heartbeat') return client.socket.send({ type: 'heartbeat', serverNow: this.clock() });
+    if (value.type === 'heartbeat') return client.socket.send({ type: 'heartbeat', serverNow: this.clock(), sentAt: value.sentAt });
+    if (value.type === 'action') {
+      const time = this.clock();
+      if (time - (client.actionWindowAt || 0) >= 1000) { client.actionWindowAt = time; client.actionCount = 0; }
+      client.actionCount = (client.actionCount || 0) + 1;
+      const ok = client.actionCount <= 100 && typeof value.action === 'string' &&
+        value.data && typeof value.data === 'object' && !Array.isArray(value.data) &&
+        this.shared.apply(player, value.action, value.data);
+      return client.socket.send({ type: 'result', requestId: String(value.requestId || '').slice(0, 64), ok: !!ok });
+    }
     if (value.type === 'state') return this.updateState(client, player, value.state);
     if (value.type === 'event') return this.publishEvent(client, player, value.event);
     client.socket.send({ type: 'error', error: 'Unknown message type.' });
@@ -67,7 +81,7 @@ export class Match {
     const state = normalizeState(value);
     if (!state) return client.socket.send({ type: 'error', error: 'Invalid player state.' });
     Object.assign(player, state, { updatedAt: time });
-    this.broadcast({ type: 'playerState', player: { ...player }, serverNow: time }, player.id);
+    this.broadcast({ type: 'playerState', player: { id: player.id, ...state, updatedAt: time }, serverNow: time }, player.id);
   }
 
   publishEvent(client, player, raw) {
@@ -77,15 +91,12 @@ export class Match {
     const event = normalizeEvent(raw);
     if (!event) return client.socket.send({ type: 'error', error: 'Invalid event.' });
     if (event.kind === 'asteroidDestroyed') {
-      if (!event.id || this.asteroids.has(event.id)) return client.socket.send({ type: 'eventRejected', kind: event.kind, id: event.id });
-      this.asteroids.add(event.id);
+      if (!this.shared.apply(player, 'asteroidClaim', { id: event.id })) return client.socket.send({ type: 'eventRejected', kind: event.kind, id: event.id });
     }
-    if (event.kind === 'gunDropPublished' && event.id) this.gunDrops.set(event.id, { ownerId: player.id, expiresAt: time + 10_000 });
-    if (event.kind === 'gunDropClaimed' && event.id) {
-      const drop = this.gunDrops.get(event.id);
-      if (!drop || drop.expiresAt < time) return client.socket.send({ type: 'eventRejected', kind: event.kind, id: event.id });
-      this.gunDrops.delete(event.id);
-    }
+    if (event.kind === 'gunDropPublished' && !this.shared.apply(player, 'dropPublish', { drops: [{ id: event.id, x: player.x, y: player.y }] }))
+      return client.socket.send({ type: 'eventRejected', kind: event.kind, id: event.id });
+    if (event.kind === 'gunDropClaimed' && !this.shared.apply(player, 'dropClaim', { id: event.id }))
+      return client.socket.send({ type: 'eventRejected', kind: event.kind, id: event.id });
     const record = { ...event, by: player.id, at: time };
     this.events.push(record);
     if (this.events.length > EVENT_LIMIT) this.events.splice(0, this.events.length - EVENT_LIMIT);
@@ -97,7 +108,7 @@ export class Match {
     for (const [studentId, client] of this.clients) {
       if (client.lastSeenAt < cutoff) client.socket.close(4002, 'Connection timed out.');
     }
-    for (const [id, drop] of this.gunDrops) if (drop.expiresAt < this.clock()) this.gunDrops.delete(id);
+    this.shared.cleanup();
   }
 
   broadcast(value, excludedStudentId = null) {

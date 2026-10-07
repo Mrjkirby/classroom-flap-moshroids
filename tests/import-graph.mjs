@@ -25,7 +25,8 @@ function load(path) {
   modules.set(path, module);
   edges.set(path, []);
 
-  for (const specifier of module.dependencySpecifiers) {
+  const dynamicImports = [...source.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)].map(match => match[1]);
+  for (const specifier of new Set([...module.dependencySpecifiers, ...dynamicImports])) {
     if (specifier.startsWith('.')) {
       const target = resolve(dirname(path), specifier);
       edges.get(path).push(target);

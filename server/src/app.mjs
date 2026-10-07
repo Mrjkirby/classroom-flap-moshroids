@@ -14,6 +14,7 @@ export function createMoshroidsServer({
   allowMissingOrigin = false,
   clock = () => Date.now(),
   log = () => {},
+  ready = true,
 } = {}) {
   if (typeof authenticate !== 'function') throw new Error('A server-side access-token verifier is required.');
   const registry = new MatchRegistry({ clock, log });
@@ -24,10 +25,11 @@ export function createMoshroidsServer({
   const server = http.createServer((request, response) => {
     if (request.url === '/health') {
       response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      return response.end(JSON.stringify({ ok: true, serverNow: clock(), ...registry.status() }));
+      return response.end(JSON.stringify({ ok: true, classroomReady: ready, serverNow: clock(), ...registry.status() }));
     }
     response.writeHead(404).end();
   });
+  server.maxConnections = 256;
   server.on('connection', socket => {
     rawSockets.add(socket);
     socket.once('close', () => rawSockets.delete(socket));
