@@ -33,8 +33,10 @@ Owner-authorized hidden storage succeeded; the connector is running healthy and
 Cloudflare lists one healthy Astroids-KNAS replica. All four edge connections
 registered, and the origin health check from the connector network namespace
 returns HTTP 200 with `classroomReady:false`. No public route was created: the
-account's Domains overview shows no domains. An owner-controlled Cloudflare
-domain is required before route, external WSS/auth/load tests or cutover.
+account's Domains overview shows no domains. A conventional published route
+requires an owner-controlled Cloudflare domain. The alternative
+[Workers VPC staging edge](../edge-staging/README.md) now has a narrowly scoped
+service binding; Worker publication and external tests remain pending.
 Firebase remains selected. The realtime server, TIMEZ and routers are unchanged.
 
 ## Resume after the credential gate

@@ -64,7 +64,10 @@ No existing KNAS service was repurposed. See [server setup](server/README.md) an
 The dedicated [Astroids-KNAS connector preparation](server/cloudflared/README.md)
 reuses the existing isolated Docker bridge without altering the realtime server.
 It uses a pinned official Cloudflare image and a private read-only token file;
-it remains stopped at the owner credential gate. Firebase remains selected.
+the connector is now healthy. Firebase remains selected. The isolated
+[Workers VPC staging edge](server/edge-staging/README.md) exposes only `/health`
+and `/ws` once published; it does not enable classroom authentication or change
+the public game's transport.
 
 Verification commands:
 

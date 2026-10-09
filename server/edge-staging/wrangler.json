@@ -1,0 +1,13 @@
+{
+  "name": "moshroids-staging",
+  "account_id": "262ebd6446f6bdb19a0ff3a12d297024",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-09",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "vpc_services": [{
+    "binding": "MOSHROIDS",
+    "service_id": "01a12255-8c8b-7583-88d8-0093b1c2f779"
+  }]
+}
