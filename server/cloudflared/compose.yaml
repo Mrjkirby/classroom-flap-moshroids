@@ -1,0 +1,37 @@
+# Separate project: never recreates or changes moshroids-realtime.
+services:
+  moshroids-cloudflared:
+    image: cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
+    container_name: moshroids-cloudflared
+    restart: unless-stopped
+    # Verified KNAS account: mrkirby (1026), users (100). Matches the 0600 file.
+    user: "1026:100"
+    command: [tunnel, --no-autoupdate, --loglevel, info, --metrics, "127.0.0.1:2000", run, --token-file, /run/secrets/tunnel-token]
+    volumes:
+      - type: bind
+        source: ./secrets/tunnel-token
+        target: /run/secrets/tunnel-token
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [moshroids]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpu_shares: 256
+    healthcheck:
+      test: [CMD, cloudflared, tunnel, --metrics, "127.0.0.1:2000", ready]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+networks:
+  moshroids:
+    external: true
+    name: moshroids_default

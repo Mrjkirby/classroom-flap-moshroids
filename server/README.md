@@ -37,6 +37,11 @@ Run `node --test server/test/*.test.mjs`. Standalone tests bind to loopback and 
 
 ## Production prerequisites
 
+The outbound-only Astroids-KNAS connector is prepared separately in
+[`cloudflared/`](cloudflared/README.md). It reuses the existing private bridge;
+the owner credential, public route, real auth and external verification gates
+still apply. Preparing it does not activate classroom access or switch Firebase.
+
 1. Release the verified classroom issuer and configure matching private service secrets through the existing deployment workflow (not performed in this pass).
 2. A dedicated HTTPS hostname and Synology reverse-proxy WebSocket route must be configured with the exact GitHub Pages origin allowed. Do not expose a raw NAS port to the Internet.
 3. Supply the existing authenticated launch through the tested browser adapter;

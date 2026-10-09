@@ -96,6 +96,23 @@ and reconnect verification. The current pass does not claim those have passed.
 
 ## Files in this pass
 
+### Follow-up: Astroids-KNAS connector preparation, 2026-10-09
+
+Fresh inspection confirms `moshroids_default` contains only the existing healthy
+realtime container, with host loopback port 8794 and `classroomReady:false`.
+The owner's existing Astroids-KNAS tunnel is reported inactive with no routes.
+No usable tunnel credential was found in the deployment's known locations or
+configuration keys. A separate `cloudflared/compose.yaml` and hidden terminal
+credential helper are staged on KNAS; the official 2026.10.0 image was pulled
+and pinned by digest. Compose validates without creating a connector or changing
+the realtime container. The owner credential gate stops this pass before tunnel
+startup, route configuration, external WSS tests or production cutover.
+
+The earlier empty-reverse-proxy observation above is historical: subsequent
+read-only inspection found `mrkirbyastroids.synology.me:443 -> localhost:8794`
+with upgrade headers, but external reachability remains unverified. The outbound
+tunnel does not depend on that route or any inbound router forwarding.
+
 Paths relative to `/Users/btkir/Developer/MOSHroids/classroom-flap-moshroids`:
 
 ```text

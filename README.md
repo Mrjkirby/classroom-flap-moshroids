@@ -61,6 +61,11 @@ in deny-all standby while issuer/launcher release and public WSS are incomplete.
 No existing KNAS service was repurposed. See [server setup](server/README.md) and
 [operation inventory, measurements and release gate](server/TRANSPORT-AUDIT.md).
 
+The dedicated [Astroids-KNAS connector preparation](server/cloudflared/README.md)
+reuses the existing isolated Docker bridge without altering the realtime server.
+It uses a pinned official Cloudflare image and a private read-only token file;
+it remains stopped at the owner credential gate. Firebase remains selected.
+
 Verification commands:
 
 ```sh
