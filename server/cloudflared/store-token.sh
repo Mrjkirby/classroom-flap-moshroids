@@ -20,17 +20,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 stty -echo </dev/tty
-printf 'Paste ONLY the Astroids-KNAS tunnel token (hidden), then Enter: ' >/dev/tty
-IFS= read -r tunnel_token </dev/tty
+tunnel_token=$(python3 "$(dirname -- "$0")/read-token.py")
 stty "$terminal_state" </dev/tty
-printf '\n' >/dev/tty
-case "$tunnel_token" in
-  ''|*[!A-Za-z0-9_+/=-]*) printf 'Invalid token format; nothing saved.\n' >&2; exit 1 ;;
-esac
-if [ "${#tunnel_token}" -lt 32 ] || [ "${#tunnel_token}" -gt 4096 ]; then
-  printf 'Invalid token length; nothing saved.\n' >&2
-  exit 1
-fi
 mkdir -p "$token_directory"
 chmod 700 "$token_directory"
 # Noclobber also protects against another process creating the file after check.

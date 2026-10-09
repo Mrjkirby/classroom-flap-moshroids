@@ -21,6 +21,21 @@ The helper refuses replacement and writes `secrets/tunnel-token` with mode 0600
 inside a mode-0700 directory owned by the verified KNAS account (1026:100).
 It does not start a container. The credential is mounted read-only and excluded
 from Git. File contents must never be inspected or printed by deployment tools.
+The Python 3 input reader accepts the current base64 JSON tunnel-token envelope,
+removes only paired terminal bracketed-paste markers, and rejects empty input,
+whitespace, multiline pastes, whole Docker commands and malformed envelopes.
+It reports categories only, never the rejected input. This is syntax validation;
+only Cloudflare can authenticate the token.
+
+### Current gate (2026-10-09)
+
+Owner-authorized hidden storage succeeded; the connector is running healthy and
+Cloudflare lists one healthy Astroids-KNAS replica. All four edge connections
+registered, and the origin health check from the connector network namespace
+returns HTTP 200 with `classroomReady:false`. No public route was created: the
+account's Domains overview shows no domains. An owner-controlled Cloudflare
+domain is required before route, external WSS/auth/load tests or cutover.
+Firebase remains selected. The realtime server, TIMEZ and routers are unchanged.
 
 ## Resume after the credential gate
 

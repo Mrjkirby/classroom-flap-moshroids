@@ -8,7 +8,9 @@ import { spawnSync } from 'node:child_process';
 
 const compose = readFileSync(new URL('../cloudflared/compose.yaml', import.meta.url), 'utf8');
 const helper = fileURLToPath(new URL('../cloudflared/store-token.sh', import.meta.url));
-const syntheticToken = 'A'.repeat(64); // Synthetic fixture, not a Cloudflare credential.
+const syntheticToken = Buffer.from(JSON.stringify({
+  a: 'synthetic-account', t: 'synthetic-tunnel', s: 'synthetic-not-a-secret',
+})).toString('base64'); // Never use a real credential in fixtures.
 
 test('connector adds only one service on the existing isolated bridge', () => {
   assert.deepEqual([...compose.matchAll(/^  ([a-z][\w-]+):$/gm)].map(m => m[1]),
@@ -66,8 +68,28 @@ test('owner helper saves synthetic token without echo, securely, and refuses ove
 test('invalid terminal input does not save a credential', async () => {
   const directory = join(mkdtempSync(join(tmpdir(), 'moshroids-token-test-')), 'secrets');
   const result = await enterInTerminal(directory, 'not a token');
-  assert.match(result.output, /Invalid token format/);
+  assert.match(result.output, /Whitespace or multiline input rejected/);
   assert.equal(existsSync(join(directory, 'tunnel-token')), false);
+});
+
+test('terminal bracketed paste accepts the same synthetic Cloudflare envelope without echo', async () => {
+  const directory = join(mkdtempSync(join(tmpdir(), 'moshroids-token-test-')), 'secrets');
+  const result = await enterInTerminal(directory, '\x1b[200~' + syntheticToken + '\x1b[201~');
+  assert.equal(result.code, 0, result.output);
+  assert.equal(readFileSync(join(directory, 'tunnel-token'), 'utf8'), syntheticToken);
+  assert.equal(result.output.includes(syntheticToken), false);
+});
+
+test('empty, whitespace, multiline, Docker command and malformed envelope are rejected', async () => {
+  for (const invalid of ['', ' ' + syntheticToken, syntheticToken + '\nSECOND-LINE',
+    'docker run cloudflare/cloudflared:latest tunnel run --token ' + syntheticToken,
+    'eyJ' + 'A'.repeat(61)]) {
+    const directory = join(mkdtempSync(join(tmpdir(), 'moshroids-token-test-')), 'secrets');
+    const result = await enterInTerminal(directory, invalid);
+    assert.notEqual(result.code, 0);
+    assert.equal(existsSync(join(directory, 'tunnel-token')), false);
+    assert.equal(result.output.includes(syntheticToken), false);
+  }
 });
 
 test('public selector remains Firebase and credential files are Git-ignored', () => {
