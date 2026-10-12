@@ -1,0 +1,30 @@
+services:
+  moshroids-auth-staging:
+    # Existing verified KNAS image; no rebuild or retag of the standby service.
+    image: sha256:a76a5b078fa0f9e0839b24a0375d60400a6f8438fff161fc9c00197a8c2b0dcd
+    container_name: moshroids-auth-staging
+    restart: unless-stopped
+    env_file:
+      - ./private/service.env
+    environment:
+      MOSHROIDS_ALLOWED_ORIGINS: https://mrjkirby.github.io
+      MOSHROIDS_STANDBY: "false"
+      MOSHROIDS_AUTH_VERIFY_URL: https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site/api/moshroids
+    networks:
+      - moshroids
+    # No published ports, new public hostname, or change to the Worker binding.
+    mem_limit: 192m
+    cpu_shares: 256
+    pids_limit: 64
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+networks:
+  moshroids:
+    external: true
+    name: moshroids_default

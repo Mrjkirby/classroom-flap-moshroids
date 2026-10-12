@@ -42,6 +42,11 @@ GitHub Pages serves `teams/index.html` directly at https://mrjkirby.github.io/cl
 
 ## KNAS realtime transport (gated; Firebase still default)
 
+The [private EDU-authenticated staging instance](server/auth-staging/README.md)
+uses the real issuer on the existing Snake Site. It is separate from the
+deny-all server/public staging edge and publishes no ports. Its readiness does
+not authorize a production transport switch.
+
 `src/transport/config.js` selects `firebase` (default) or `knas`. All player,
 asteroid/MR. K, drop, Teams and 1VW networking follows this selector. KNAS mode
 does not import Firebase; rollback adapters retain the existing implementation.
