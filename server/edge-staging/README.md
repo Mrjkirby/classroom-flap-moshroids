@@ -1,19 +1,22 @@
 # MOSHROIDS Workers VPC staging
 
-Transport validation only. Firebase remains production; no game, identity,
-session, router, container, or classroom data changes are part of this edge.
+Isolated transport and tester-authorized gameplay verification. Firebase remains
+production. The edge does not own identity, sessions, or classroom data.
 
 ## Ownership and routing
 
 - `worker.mjs`: exact GET path allowlist, Origin guard, pinned VPC forwarding.
-- `wrangler.json`: existing Cloudflare account and one narrow VPC Service binding.
+- `wrangler.json`: existing Cloudflare account and two narrow VPC Service bindings.
+- `verify-bridge.mjs`: server-only authorization and fixed probe request validation.
+- `gameplay-probe.mjs`: private protocol probe; no identity or game authority.
 - `probe.mjs`: external TLS/WS upgrade, ping/pong, rejection and socket-concurrency
   checks using synthetic invalid credentials only. No authentication bypass.
 - `../test/edge-staging.test.mjs`: isolated edge policy regression tests.
 
 Intended public endpoint: `https://moshroids-staging.mrjkirby.workers.dev`.
-The only routes are `/health` and `/ws`; query strings and other methods/paths
-are rejected. WebSockets require Origin `https://mrjkirby.github.io` at both
+Public transport routes are `/health` and `/ws`; the separate POST `/verify`
+requires server authorization as described below. Query strings and other
+methods/paths are rejected. WebSockets require Origin `https://mrjkirby.github.io` at both
 edge and KNAS. Origin is not authentication: game messages still pass through
 the existing server's classroom-token/session gate before any join.
 
@@ -23,8 +26,9 @@ using existing Astroids-KNAS tunnel `0df1a0e1-0d74-4873-85e6-4f6392b602d1`.
 It is a service binding, NOT a broad network binding. No DNS/public tunnel route,
 new connector, router forwarding or raw public NAS port is needed.
 
-The Worker has no credentials, storage, gameplay logic or authority. It passes
-upgrades intact and forwards neither cookies nor Authorization headers. No
+The public transport handler has no storage or game authority. It passes
+upgrades intact and forwards neither cookies nor Authorization headers. The
+private verification handler alone uses the server secret. No
 request logging is enabled; errors do not disclose private network details.
 The server remains the authoritative verifier. TLS ends at Cloudflare; the
 encrypted tunnel reaches the existing private Docker HTTP origin.
@@ -101,7 +105,7 @@ MOSHROIDS server. Keep all staging actions separate from GitHub Pages release.
 
 References: [VPC services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/),
 [VPC pricing](https://developers.cloudflare.com/workers-vpc/platform/pricing/).
-# Authenticated private verification bridge
+## Authenticated private verification bridge
 
 The existing Worker also exposes POST `/verify`, but only for server-to-server
 requests authenticated by the existing `MOSHROIDS_SERVICE_SECRET`; browser
@@ -120,3 +124,18 @@ The secret is provisioned using Wrangler hidden stdin, never its config file.
 Observability remains disabled. Do not log request bodies or run credential-
 dumping debugging commands. Keep Firebase selected and the earlier unpublished
 GitHub commit chain local unless separately approved for publication.
+
+### Release verification — 2026-10-12
+
+Snake v30 (`423d0b4`) and Worker version
+`37a051b5-66cf-450a-9a15-63f914239468` are deployed. Local suites: Snake 159/159,
+MOSHROIDS 79/79; Snake TypeScript and production build pass. Public external
+probe: 26 upgrades and two ping/pong rounds, invalid grants rejected, reconnect
+and clean close pass. Public readiness remains false. Both KNAS servers and
+the connector remain healthy; the private server publishes no ports.
+
+Live ordinary TEST is correctly denied by the existing tester gate. Anonymous
+Snake staging returns 401; uncredentialed/browser edge requests return 403.
+Real authenticated gameplay count is zero: existing SUPERMRKIRBY sign-in with
+LLP Tester Mode enabled is still required. Synthetic protocol tests are not
+live EDU issuance/consume/gameplay proof.

@@ -70,9 +70,12 @@ The dedicated [Astroids-KNAS connector preparation](server/cloudflared/README.md
 reuses the existing isolated Docker bridge without altering the realtime server.
 It uses a pinned official Cloudflare image and a private read-only token file;
 the connector is now healthy. Firebase remains selected. The isolated
-[Workers VPC staging edge](server/edge-staging/README.md) exposes only `/health`
-and `/ws` once published; it does not enable classroom authentication or change
-the public game's transport.
+[Workers VPC staging edge](server/edge-staging/README.md) exposes public `/health`
+and `/ws` plus a server-credential-protected POST `/verify` for the existing
+Snake tester-only staging control. This fixed probe reaches only the private
+auth-staging container. It does not change the public game's transport or
+enable the public standby server. Live authenticated verification still
+requires the existing SUPERMRKIRBY session and enabled LLP Tester Mode.
 
 Verification commands:
 
