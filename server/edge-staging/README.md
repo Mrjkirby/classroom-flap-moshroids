@@ -42,14 +42,51 @@ npx wrangler@4.149.0 deploy --config server/edge-staging/wrangler.json
 node server/edge-staging/probe.mjs
 ```
 
-At preparation, all five focused tests, the full 74-test regression suite and
-the Wrangler build pass. Worker
-publication is awaiting the owner completing Cloudflare's Wrangler consent
-screen. No public hostname has been verified yet. The VPC service exists;
-both existing KNAS containers were checked running/healthy afterwards.
+## External verification — 2026-10-11 (America/Toronto)
+
+Published the unchanged Worker from commit `954d834` using the existing binding.
+Cloudflare Worker version: `99d97834-4ac8-48af-87bf-d329679d3f18`.
+Wrangler OAuth required `workers_scripts:write` in addition to the previously
+granted scopes. No paid upgrade, DNS change or connector restart was needed.
+
+The public hostname above is live. Tests ran from the Mac through public
+Cloudflare HTTPS/WSS (edge IP `172.64.80.1`, valid TLS), not through a direct LAN
+or container URL. This is external-edge routing proof, not a separate off-site
+ISP/browser test. An immediate post-deploy request returned Cloudflare 1042/404;
+a subsequent check passed without any code/config changes. Treat this as an
+observed transient, not proven long-duration reliability or a known VPC cause.
+
+- `/health`: HTTP 200, real service payload (`ok`, `serverNow`, zero rooms and
+  connections, `classroomReady:false`), consistent with direct container health.
+  Later external measured latency: 203 ms (earlier successful probe: 227 ms).
+- Unexpected HTTP paths and query target attempts: 404. Missing/wrong WebSocket
+  Origin: 403 before upgrade. `/health` and `/ws` are the only forwarded paths.
+- 26 concurrent external TLS sockets: all valid 101 handshakes; two ping/pong
+  rounds separated by a one-second concurrent hold. Upgrade latency 115–297 ms.
+  All 26 invalid hello tokens received the backend's close code 4003.
+- Fresh reconnect: valid upgrade; forged resume token rejected with 4003.
+  No-token socket closed at 5002 ms, preserving the five-second auth deadline.
+  Normal client close 1000 completed; no rooms/game sessions were created.
+- Both MOSHROIDS containers remained healthy. Connector readiness passed.
+  Realtime host port remains `127.0.0.1:8794`; TIMEZ remains running/healthy.
+  No KNAS container, router, production frontend or Firebase changes were made.
+- Full regression suite: 74/74 passed. Worker build, syntax and diff checks pass.
+
+**TRANSPORT PASS / GAMEPLAY AUTH GATED.** Ping/pong is transport traffic, not
+authenticated gameplay. Cloudflare may handle control frames at the edge;
+the backend-specific authentication responses and service health additionally
+establish the upstream path. This short 26-socket test is NOT a sustained
+26-player workload or a successful authenticated session-resume test.
+
+Next safe authenticated staging requires separate authorization for an isolated
+instance of this same server/verifier, configured against the real existing EDU
+one-time-token issuer with a designated non-student test identity and private
+service credentials. It needs its own equally narrow staging binding; it must
+not change this deny-all instance, invent identities, or redirect production.
+Do not add a fake verifier or relax Origin checks to obtain a passing test.
 
 The external probe stops if health fails. It never supplies a real student token.
-It can show 26 simultaneous unauthenticated upgrades and fail-closed token
+It shows 26 simultaneous unauthenticated upgrades and fail-closed token
 rejection, but that is NOT 26-player gameplay capacity or authenticated resume
 verification. `classroomReady:false` remains an explicit blocker to those tests;
 do not turn off standby or install a synthetic verifier to make them pass.

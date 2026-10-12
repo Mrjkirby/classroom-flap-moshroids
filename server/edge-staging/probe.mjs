@@ -45,8 +45,8 @@ function connect(browserOrigin = origin) {
         async wait(opcode) {
           const deadline = Date.now() + 8000;
           while (Date.now() < deadline) {
-            const found = frames.find(value => value.opcode === opcode);
-            if (found) return found.body;
+            const index = frames.findIndex(value => value.opcode === opcode);
+            if (index !== -1) return frames.splice(index, 1)[0].body;
             await new Promise(resolve => setTimeout(resolve, 10));
           }
           throw new Error(`Frame ${opcode} timeout`);
@@ -62,15 +62,26 @@ console.log(JSON.stringify({ healthStatus: health.status, healthMs: Math.round(p
 assert.equal(health.status, 200, 'Stop: VPC origin not reachable');
 const before = await health.json();
 console.log(JSON.stringify({ classroomReady: before.classroomReady, rooms: before.rooms, connections: before.connections }));
-assert.equal((await fetch(`${base}/not-allowed`)).status, 404);
+assert.equal(before.ok, true);
+assert.equal(before.classroomReady, false, 'This probe is only for deny-all standby');
+for (const path of ['/not-allowed', '/admin', '/metrics', '/timez', '/atlas', '/plex', '/route-riot', '/pew', '/ws?port=8793']) {
+  assert.equal((await fetch(`${base}${path}`)).status, 404);
+}
 for (const rejectedOrigin of [undefined, 'https://unexpected.example']) {
   assert.equal((await connect(rejectedOrigin === undefined ? '' : rejectedOrigin)).status, 403);
 }
+console.log(JSON.stringify({ unrelatedPathsRejected: true, missingAndWrongOriginRejected: true }));
 const clients = [];
 try {
   const settled = await Promise.allSettled(Array.from({ length: 26 }, () => connect()));
   for (const result of settled) if (result.status === 'fulfilled' && result.value.socket) clients.push(result.value);
   assert.equal(clients.length, 26, 'All 26 sockets must upgrade');
+  await Promise.all(clients.map(async client => {
+    client.send(9, 'first-ping');
+    assert.equal((await client.wait(10)).toString(), 'first-ping');
+  }));
+  // Stay beneath the unchanged five-second server authentication deadline.
+  await new Promise(resolve => setTimeout(resolve, 1000));
   await Promise.all(clients.map(async client => {
     client.send(9, 'staging-ping');
     assert.equal((await client.wait(10)).toString(), 'staging-ping');
@@ -78,10 +89,30 @@ try {
     assert.equal((await client.wait(8)).readUInt16BE(0), 4003);
   }));
   console.log(JSON.stringify({ upgrades: 26, pingPong: 26, invalidTokensRejected: 26,
+    concurrentHoldMs: 1000, pingRounds: 2,
     minUpgradeMs: Math.round(Math.min(...clients.map(c => c.ms))), maxUpgradeMs: Math.round(Math.max(...clients.map(c => c.ms))),
     authenticatedGameplayTested: false }));
 } finally { clients.forEach(client => client.socket.destroy()); }
 const again = await connect();
 assert.equal(again.status, 101);
-again.socket.destroy();
-console.log(JSON.stringify({ freshReconnection: true, authenticatedResumeTested: false }));
+try {
+  again.send(1, JSON.stringify({ type: 'hello', resumeToken: 'invalid-staging-resume', roomId: 'classroom' }));
+  assert.equal((await again.wait(8)).readUInt16BE(0), 4003);
+} finally { again.socket.destroy(); }
+const idle = await connect();
+const idleStart = performance.now();
+try {
+  assert.equal((await idle.wait(8)).readUInt16BE(0), 4003);
+  console.log(JSON.stringify({ authenticationDeadlineMs: Math.round(performance.now() - idleStart) }));
+} finally { idle.socket.destroy(); }
+const clean = await connect();
+try {
+  clean.send(8, Buffer.from([3, 232])); // Normal close 1000.
+  assert.equal((await clean.wait(8)).readUInt16BE(0), 1000);
+} finally { clean.socket.destroy(); }
+const after = await (await fetch(`${base}/health`)).json();
+assert.equal(after.classroomReady, false);
+assert.equal(after.connections, before.connections);
+assert.equal(after.rooms, before.rooms);
+console.log(JSON.stringify({ freshReconnection: true, forgedResumeRejected: true,
+  cleanClose: true, noGameStateCreated: true, authenticatedResumeTested: false }));

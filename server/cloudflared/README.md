@@ -35,8 +35,9 @@ registered, and the origin health check from the connector network namespace
 returns HTTP 200 with `classroomReady:false`. No public route was created: the
 account's Domains overview shows no domains. A conventional published route
 requires an owner-controlled Cloudflare domain. The alternative
-[Workers VPC staging edge](../edge-staging/README.md) now has a narrowly scoped
-service binding; Worker publication and external tests remain pending.
+[Workers VPC staging edge](../edge-staging/README.md) is now published with a
+narrowly scoped service binding. External health, 26-socket transport and
+fail-closed authentication probes pass; authenticated gameplay remains gated.
 Firebase remains selected. The realtime server, TIMEZ and routers are unchanged.
 
 ## Resume after the credential gate
