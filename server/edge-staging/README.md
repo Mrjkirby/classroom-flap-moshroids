@@ -101,3 +101,22 @@ MOSHROIDS server. Keep all staging actions separate from GitHub Pages release.
 
 References: [VPC services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/),
 [VPC pricing](https://developers.cloudflare.com/workers-vpc/platform/pricing/).
+# Authenticated private verification bridge
+
+The existing Worker also exposes POST `/verify`, but only for server-to-server
+requests authenticated by the existing `MOSHROIDS_SERVICE_SECRET`; browser
+Origin/cookies are rejected. Its only operation is a fixed staging probe, not
+an arbitrary proxy. No grant, identity or service secret is logged or returned.
+
+Snake `/moshroids-staging` uses the existing authoritative tester gate and issuer.
+Its server passes short-lived grants to this bridge. `gameplay-probe.mjs` runs
+the ordinary KNAS WebSocket protocol through the separate VPC service
+`moshroids-auth-staging`, pinned to that container on private port 8794.
+It checks identity against the server-authenticated expected identity, requires
+KNAS tester authorization, and waits for natural expiry without modifying TTL.
+Original `/health` and `/ws` routing is unchanged.
+
+The secret is provisioned using Wrangler hidden stdin, never its config file.
+Observability remains disabled. Do not log request bodies or run credential-
+dumping debugging commands. Keep Firebase selected and the earlier unpublished
+GitHub commit chain local unless separately approved for publication.

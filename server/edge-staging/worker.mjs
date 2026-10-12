@@ -1,4 +1,5 @@
 // Transport-only edge. Classroom identity and all game state remain on KNAS.
+import { verifyBridge } from './verify-bridge.mjs';
 const ALLOWED_ORIGIN = 'https://mrjkirby.github.io';
 
 function deny(status, text) {
@@ -8,6 +9,7 @@ function deny(status, text) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (!url.search && url.pathname === '/verify') return verifyBridge(request, env);
     if (url.search || !['/health', '/ws'].includes(url.pathname)) return deny(404, 'Not found');
     if (request.method !== 'GET') return deny(405, 'Method not allowed');
     const origin = request.headers.get('Origin');

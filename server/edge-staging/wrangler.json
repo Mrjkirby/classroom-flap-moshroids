@@ -9,5 +9,8 @@
   "vpc_services": [{
     "binding": "MOSHROIDS",
     "service_id": "01a12255-8c8b-7583-88d8-0093b1c2f779"
+  }, {
+    "binding": "MOSHROIDS_AUTH_STAGING",
+    "service_id": "01a13033-5f7d-7882-8dcf-3bedfd58b2c1"
   }]
 }
