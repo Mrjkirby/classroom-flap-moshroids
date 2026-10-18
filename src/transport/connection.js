@@ -1,4 +1,15 @@
 // Credentials live in this connection object only, never URLs or storage.
+export function isLaunchGrant(grant, roomId, now = Date.now()) {
+  if (!grant || typeof grant !== 'object' || grant.ok === false ||
+      grant.audience !== 'moshroids' || typeof grant.accessToken !== 'string' ||
+      !/^ml1_[a-f0-9]{64}$/.test(grant.accessToken) ||
+      typeof grant.expiresAt !== 'string' ||
+      (grant.roomId !== undefined && grant.roomId !== roomId)) return false;
+  const expiresAt = Date.parse(grant.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= now || expiresAt > now + 120_000) return false;
+  return true;
+}
+
 export class RealtimeConnection {
   constructor({ url, roomId, requestLaunch, WebSocketClass = globalThis.WebSocket, onMessage = () => {}, onStatus = () => {} }) {
     const parsed = new URL(url);
@@ -13,14 +24,17 @@ export class RealtimeConnection {
     if (this.stopped) return;
     this.onStatus(false, 'Connecting…');
     let hello;
+    let helloType;
     try {
-      if (this.resumeToken && Date.now() < this.expiresAt)
+      if (this.resumeToken && Date.now() < this.expiresAt) {
         hello = { resumeToken: this.resumeToken };
-      else {
+        helloType = 'resumeToken';
+      } else {
         if (typeof this.requestLaunch !== 'function') throw new Error('Classroom launch is not configured.');
         const grant = await this.requestLaunch(this.roomId);
-        if (!grant?.accessToken) throw new Error('No classroom grant.');
+        if (!isLaunchGrant(grant, this.roomId)) throw new Error('Invalid classroom grant.');
         hello = { accessToken: grant.accessToken };
+        helloType = 'accessToken';
       }
     } catch {
       this.onStatus(false, 'Classroom launch unavailable. Reopen from your existing classroom session.');
@@ -28,7 +42,10 @@ export class RealtimeConnection {
     }
     if (this.stopped) return;
     const socket = this.socket = new this.WebSocketClass(this.url);
-    socket.addEventListener('open', () => { socket.send(JSON.stringify({ type: 'hello', roomId: this.roomId, ...hello })); hello = null; });
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({ type: 'hello', roomId: this.roomId, ...hello }));
+      hello = null;
+    });
     socket.addEventListener('message', event => {
       let value;
       try { value = JSON.parse(event.data); } catch { socket.close(); return; }
@@ -51,7 +68,13 @@ export class RealtimeConnection {
       this.pending.clear();
       this.onStatus(false, 'Disconnected');
       if (this.stopped || event.code === 4001 || event.code === 4004) return;
-      if (event.code === 4003) this.resumeToken = null;
+      if (event.code === 4003) {
+        this.resumeToken = null;
+        if (helloType !== 'resumeToken') {
+          this.onStatus(false, 'Launch grant rejected. Reopen from the authorized LLP tester session.');
+          return;
+        }
+      }
       // Never replay state-changing actions after an ambiguous disconnect.
       this.attempts = (this.attempts || 0) + 1;
       if (this.attempts <= 5) this.retry = setTimeout(() => this.connect(), Math.min(1000 * 2 ** (this.attempts - 1), 10000));

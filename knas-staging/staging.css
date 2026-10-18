@@ -1,0 +1,29 @@
+.staging-banner {
+  position: fixed;
+  z-index: 20;
+  top: 0.65rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.45rem 0.8rem;
+  border: 1px solid #ff875f;
+  border-radius: 4px;
+  background: #160d0a;
+  color: #ffb39a;
+  font: 700 0.78rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.09em;
+  white-space: nowrap;
+}
+
+.brand .staging-mark {
+  margin-left: 0.7rem;
+  color: #ff875f;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 600px) {
+  .staging-banner {
+    top: 0.35rem;
+    font-size: 0.65rem;
+  }
+}

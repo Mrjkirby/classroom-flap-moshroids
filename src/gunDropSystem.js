@@ -10,6 +10,7 @@ import {
 import {
   getLocalIdentity
 } from './transport/index.js';
+import { sharedClock } from './sharedClock.js';
 
 
 const MAX_GUNS = 40;
@@ -20,14 +21,14 @@ const MAX_GUNS = 40;
 
    Coordinates:
    - weaponSystem local drop state
-   - shared Firebase gun-drop state
+   - shared gun-drop state
    - atomic pickup claims
    - gun loss on player death
 
    Does NOT own:
    - player death
    - rendering
-   - Firebase implementation
+   - realtime transport implementation
    - weapon emitter geometry
    - player authentication
    - world state
@@ -111,7 +112,7 @@ export function createGunDropSystem({
      * Death immediately resets the local player's weapon
      * count to the starting gun.
      *
-     * Firebase publication is network persistence only and
+     * Shared publication is network persistence only and
      * must not delay the local death sequence.
      */
     weaponSystem.setGunCount(
@@ -129,7 +130,7 @@ export function createGunDropSystem({
 
     if (!published) {
       console.warn(
-        'Gun drops were created locally but were not confirmed by Firebase.'
+        'Gun drops were created locally but were not confirmed by the realtime server.'
       );
     }
 
@@ -138,10 +139,10 @@ export function createGunDropSystem({
 
 
   /* =======================================================
-     FIREBASE DROP → LOCAL DROP
+     SHARED DROP → LOCAL DROP
      ======================================================= */
 
-  function firebaseDropToLocal(
+  function sharedDropToLocal(
     drop
   ) {
     const remainingMs =
@@ -150,7 +151,7 @@ export function createGunDropSystem({
         Number(
           drop.expiresAt
         ) -
-          Date.now()
+          sharedClock.now()
       );
 
     const localNow =
@@ -161,7 +162,7 @@ export function createGunDropSystem({
 
       /*
        * weaponSystem uses the local performance clock.
-       * Firebase timestamps use the wall clock.
+       * Shared timestamps use server wall time.
        *
        * Convert the remaining lifetime rather than mixing
        * the two clock domains.
@@ -197,7 +198,7 @@ export function createGunDropSystem({
 
 
     /*
-     * Mirror every currently available Firebase drop into
+     * Mirror every currently available shared drop into
      * weaponSystem's local render/pickup collection.
      */
     sharedDrops.forEach(
@@ -211,7 +212,7 @@ export function createGunDropSystem({
           );
 
         const localDrop =
-          firebaseDropToLocal(
+          sharedDropToLocal(
             drop
           );
 
@@ -246,7 +247,7 @@ export function createGunDropSystem({
 
 
     /*
-     * Firebase is authoritative for drop availability.
+     * The selected transport is authoritative for drop availability.
      *
      * A drop disappearing from the shared collection means
      * it was claimed, expired, or otherwise removed.
@@ -318,7 +319,7 @@ export function createGunDropSystem({
     /*
      * Preserve everything needed after the await.
      *
-     * Firebase's listener can remove the local drop as soon
+     * Shared-state updates can remove the local drop as soon
      * as the transaction marks it claimed.
      */
     const dropId =
@@ -336,10 +337,10 @@ export function createGunDropSystem({
 
     try {
       /*
-       * Firebase transaction is authoritative.
+       * The realtime server action is authoritative.
        *
-       * If two students hit the same dropped gun, exactly
-       * one transaction can win.
+       * If two players hit the same dropped gun, exactly one
+       * server action can win.
        */
       const claimed =
         await claimGunDrop(
@@ -354,10 +355,10 @@ export function createGunDropSystem({
       /*
        * CRITICAL RACE FIX
        *
-       * The Firebase listener may already have removed this
+       * A shared-state update may already have removed this
        * drop from weaponSystem.drops.
        *
-       * A successful Firebase claim is nevertheless proof
+       * A successful server claim is nevertheless proof
        * that THIS player owns the gun.
        *
        * weaponSystem.confirmPickup() therefore must award the
@@ -371,7 +372,7 @@ export function createGunDropSystem({
 
       if (!pickup) {
         console.error(
-          'Firebase awarded gun ownership but weaponSystem failed to increment the gun count:',
+          'Realtime server awarded gun ownership but weaponSystem failed to increment the gun count:',
           dropId
         );
 
@@ -420,7 +421,7 @@ export function createGunDropSystem({
     }
 
     const now =
-      Date.now();
+      sharedClock.now();
 
     getGunDrops().forEach(
       (
@@ -436,12 +437,7 @@ export function createGunDropSystem({
           return;
         }
 
-        /*
-         * Cleanup is intentionally asynchronous.
-         *
-         * The Firebase listener remains authoritative and
-         * will reconcile weaponSystem when removal completes.
-         */
+        // Cleanup is asynchronous; the active transport reconciles the result.
         removeExpiredGunDrop(
           id
         ).catch(
@@ -473,7 +469,7 @@ export function createGunDropSystem({
     cleanupExpiredDrops();
 
     /*
-     * Never await a Firebase transaction inside the game
+     * Never await a network action inside the game
      * frame loop.
      *
      * pickupInProgress prevents overlapping claims while the

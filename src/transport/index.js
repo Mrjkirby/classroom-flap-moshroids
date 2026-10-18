@@ -2,8 +2,8 @@
  * MOSHROIDS multiplayer boundary.
  *
  * Game orchestration imports this module, never a provider-specific transport.
- * Firebase remains the only active provider until a WebSocket adapter can use a
- * real short-lived classroom access token and passes public WSS verification.
+ * Firebase remains the production default. The isolated KNAS staging page
+ * selects the WebSocket adapter and obtains its grant from an LLP launch bridge.
  */
 import { transportConfig } from './config.js';
 const adapter = transportConfig.provider === 'knas'

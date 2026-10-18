@@ -9,7 +9,7 @@
  *      ↓
  *   asteroidNetwork.js
  *      ↓
- *   Firebase
+ *   selected realtime transport
  *
  * Owns:
  * - pending local destruction claims
@@ -18,7 +18,7 @@
  * - requesting authoritative shared destruction
  *
  * Does NOT own:
- * - Firebase transport
+ * - transport implementation
  * - asteroid construction
  * - asteroid movement
  * - asteroid difficulty
@@ -79,7 +79,7 @@ export function createAsteroidMultiplayerSystem({
    * destruction.
    *
    * Prevents duplicate destruction attempts from the same
-   * browser while Firebase resolves the transaction.
+   * browser while the shared claim is pending.
    */
   const pending =
     new Set();
@@ -89,7 +89,7 @@ export function createAsteroidMultiplayerSystem({
    * Shared destruction records already consumed by this
    * browser.
    *
-   * Firebase retains destruction history, so this prevents
+   * The realtime server retains destruction history, so this prevents
    * processing the same record every frame.
    */
   const processed =
@@ -150,7 +150,7 @@ export function createAsteroidMultiplayerSystem({
    * deterministic asteroid field.
    *
    * This resets only browser-local synchronization state.
-   * It does NOT delete Firebase destruction history.
+   * It does NOT delete shared destruction history.
    */
   function resetField() {
     pending.clear();
@@ -180,11 +180,11 @@ export function createAsteroidMultiplayerSystem({
      ======================================================= */
 
   /*
-   * Apply authoritative Firebase destruction records to this
+   * Apply authoritative destruction records to this
    * browser's local asteroid field.
    *
    * A locally initiated destruction has normally removed its
-   * asteroid before the Firebase listener receives the record.
+   * asteroid before the shared-state update arrives.
    * In that case no second explosion is created.
    */
   function sync() {
@@ -254,8 +254,8 @@ export function createAsteroidMultiplayerSystem({
    * The asteroid disappears locally immediately so gameplay
    * does not wait on network latency.
    *
-   * Firebase then atomically decides which browser owns the
-   * authoritative destruction.
+   * The selected transport atomically decides which browser
+   * owns the authoritative destruction.
    *
    * Returns:
    *
@@ -264,7 +264,7 @@ export function createAsteroidMultiplayerSystem({
    *
    * false
    *   The asteroid was already destroyed, already pending,
-   *   another browser won the claim, or Firebase could not
+   *   another browser won the claim, or the server could not
    *   confirm the destruction.
    *
    * CollisionSystem uses TRUE when deciding whether this
@@ -299,7 +299,7 @@ export function createAsteroidMultiplayerSystem({
 
 
     /*
-     * Firebase has already told us this asteroid was
+     * Shared state has already told us this asteroid was
      * destroyed.
      *
      * Remove any stale local copy but do not attempt another
@@ -334,8 +334,7 @@ export function createAsteroidMultiplayerSystem({
      * Optimistic local removal.
      *
      * This prevents bullets or ships from interacting with
-     * the same asteroid while the Firebase transaction is
-     * outstanding.
+     * the same asteroid while the shared claim is outstanding.
      */
     const removedAsteroid =
       removeLocalAsteroid(
@@ -372,8 +371,8 @@ export function createAsteroidMultiplayerSystem({
        * A FALSE transaction result is valid when another
        * browser won the race.
        *
-       * The Firebase listener can arrive slightly after the
-       * transaction result, so absence from the local cache
+       * The shared update can arrive slightly after the action
+       * result, so absence from the local cache
        * here does not automatically mean an error.
        */
       if (
