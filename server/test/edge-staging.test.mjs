@@ -6,7 +6,10 @@ const origin = 'https://mrjkirby.github.io';
 function fixture() {
   const calls = [];
   const response = new Response('origin');
-  return { calls, response, env: { MOSHROIDS: { fetch: async request => { calls.push(request); return response; } } } };
+  return { calls, response, env: {
+    MOSHROIDS: { fetch: async request => { calls.push(request); return response; } },
+    MOSHROIDS_VPC: { fetch: async request => { calls.push(request); return response; } },
+  } };
 }
 test('only exact GET paths are exposed, with no query-based credentials/targets', async () => {
   const { calls, env } = fixture();
@@ -33,15 +36,24 @@ test('WebSocket missing/wrong Origin and non-upgrade are denied before VPC', asy
   assert.equal((await worker.fetch(new Request('https://example.workers.dev/ws', { headers: { Origin: origin } }), env)).status, 426);
   assert.equal(calls.length, 0);
 });
-test('upgrade and Origin are passed intact; no edge auth replacement', async () => {
-  const { calls, env, response } = fixture();
+test('WebSocket upgrade uses native VPC fetch to the fixed private staging address', async () => {
+  const calls = [];
+  const response = { status: 101, webSocket: {} };
+  const env = { MOSHROIDS_VPC: { fetch: async request => { calls.push(request); return response; } } };
   assert.equal(await worker.fetch(new Request('https://example.workers.dev/ws', {
-    headers: { Origin: origin, Upgrade: 'websocket', 'Sec-WebSocket-Version': '13', Cookie: 'synthetic' },
+    headers: { Origin: origin, Upgrade: 'websocket', Connection: 'Upgrade',
+      'Sec-WebSocket-Key': 'synthetic-key', 'Sec-WebSocket-Version': '13',
+      Cookie: 'synthetic', Authorization: 'synthetic' },
   }), env), response);
-  assert.equal(calls[0].url, 'http://moshroids-realtime:8794/ws');
+  assert.equal(calls[0].url, 'http://172.22.0.4:8794/ws');
   assert.equal(calls[0].headers.get('Origin'), origin);
   assert.equal(calls[0].headers.get('Upgrade'), 'websocket');
+  assert.equal(calls[0].headers.get('Connection'), 'Upgrade');
+  assert.equal(calls[0].headers.has('Sec-WebSocket-Key'), true);
+  assert.equal(calls[0].headers.has('Sec-WebSocket-Version'), true);
   assert.equal(calls[0].headers.has('Cookie'), false);
+  assert.equal(calls[0].headers.has('Authorization'), false);
+  assert.equal(calls[0].redirect, 'manual');
 });
 test('VPC errors fail closed without exposing network details', async () => {
   const response = await worker.fetch(new Request('https://example.workers.dev/health'), {

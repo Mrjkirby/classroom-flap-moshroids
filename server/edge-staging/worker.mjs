@@ -1,6 +1,7 @@
 // Transport-only edge. Classroom identity and all game state remain on KNAS.
 import { verifyBridge } from './verify-bridge.mjs';
 const ALLOWED_ORIGIN = 'https://mrjkirby.github.io';
+const PRIVATE_WS_URL = 'http://172.22.0.4:8794/ws';
 
 function deny(status, text) {
   return new Response(text, { status, headers: { 'cache-control': 'no-store' } });
@@ -26,9 +27,12 @@ export default {
       if (value !== null) headers.set(name, value);
     }
     try {
-      // VPC service itself is pinned to moshroids-realtime, HTTP port 8794.
-      // Return upgrades intact: no edge session, identity, or gameplay authority.
-      return await env.MOSHROIDS.fetch(new Request(`http://moshroids-realtime:8794${url.pathname}`, {
+      if (url.pathname === '/ws') {
+        return await env.MOSHROIDS_VPC.fetch(new Request(PRIVATE_WS_URL, {
+          method: 'GET', headers, redirect: 'manual',
+        }));
+      }
+      return await env.MOSHROIDS.fetch(new Request('http://moshroids-realtime:8794/health', {
         method: 'GET', headers, redirect: 'manual',
       }));
     } catch {

@@ -12,5 +12,10 @@
   }, {
     "binding": "MOSHROIDS_AUTH_STAGING",
     "service_id": "01a13033-5f7d-7882-8dcf-3bedfd58b2c1"
+  }],
+  "vpc_networks": [{
+    "binding": "MOSHROIDS_VPC",
+    "tunnel_id": "0df1a0e1-0d74-4873-85e6-4f6392b602d1",
+    "remote": true
   }]
 }

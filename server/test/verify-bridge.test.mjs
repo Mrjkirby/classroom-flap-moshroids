@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyBridge } from '../edge-staging/verify-bridge.mjs';
-import { runGameplayProbe } from '../edge-staging/gameplay-probe.mjs';
+import { connectPrivate, runGameplayProbe } from '../edge-staging/gameplay-probe.mjs';
 import { createMoshroidsServer } from '../src/app.mjs';
 const secret = 'a'.repeat(64); // Synthetic fixture only.
 const grant = token => ({ accessToken: 'ml1_' + token.repeat(64), audience: 'moshroids',
@@ -11,15 +11,34 @@ const request = (headers = {}, body = input()) => new Request('https://edge.inva
   method: 'POST', headers: { authorization: 'Bearer ' + secret, ...headers }, body: JSON.stringify(body),
 });
 test('bridge rejects browser Origin/cookies and missing/wrong service credentials', async () => {
-  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_AUTH_STAGING: {} };
+  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_VPC: {} };
   for (const headers of [{origin:'https://snake.invalid'}, {cookie:'fixture'}, {authorization:''}, {authorization:'forged'}])
     assert.equal((await verifyBridge(request(headers), env)).status, 403);
 });
 test('bridge is target-pinned and rejects extra identity/target/command fields', async () => {
-  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_AUTH_STAGING: {} };
+  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_VPC: {} };
   for (const key of ['target', 'studentId', 'command'])
     assert.equal((await verifyBridge(request({}, { ...input(), [key]: 'forged' }), env)).status, 400);
   assert.equal((await verifyBridge(request(), env, async () => ({ checks: { consume: true } }))).status, 200);
+});
+test('probe diagnostics report only a fixed stage and upgrade status, never private details', async () => {
+  let upstreamRequest;
+  const rejected = await runGameplayProbe(input(), hello => connectPrivate({
+    fetch: async request => {
+      upstreamRequest = request;
+      return new Response('private upstream body', { status: 400 });
+    },
+  }, hello));
+  assert.deepEqual(rejected.failure, { stage: 'substitution', upgradeStatus: 400 });
+  assert.equal(upstreamRequest.url, 'http://172.22.0.4:8794/ws');
+  assert.equal(upstreamRequest.headers.get('Origin'), 'https://mrjkirby.github.io');
+  assert.equal(upstreamRequest.headers.get('Upgrade'), 'websocket');
+  const thrown = await runGameplayProbe(input(), async () => { throw Error('secret exception detail'); });
+  assert.deepEqual(thrown.failure, { stage: 'substitution' });
+  const vpc = await runGameplayProbe(input(), async () => { throw Error('ProxyError: http_upgrade_failed secret'); });
+  assert.deepEqual(vpc.failure, { stage: 'substitution', vpcError: 'http_upgrade_failed' });
+  assert.ok(!JSON.stringify([rejected, thrown]).includes('private upstream'));
+  assert.ok(!JSON.stringify([rejected, thrown]).includes('secret exception'));
 });
 test('probe exercises real loopback protocol including replay, expiry, shared claims and resume', async () => {
   const data = input(); let now = Date.now(); const used = new Set();

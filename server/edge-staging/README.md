@@ -6,7 +6,8 @@ production. The edge does not own identity, sessions, or classroom data.
 ## Ownership and routing
 
 - `worker.mjs`: exact GET path allowlist, Origin guard, pinned VPC forwarding.
-- `wrangler.json`: existing Cloudflare account and two narrow VPC Service bindings.
+- `wrangler.json`: existing Cloudflare account, two VPC Service bindings, and
+  the staging VPC Network binding.
 - `verify-bridge.mjs`: server-only authorization and fixed probe request validation.
 - `gameplay-probe.mjs`: private protocol probe; no identity or game authority.
 - `probe.mjs`: external TLS/WS upgrade, ping/pong, rejection and socket-concurrency
@@ -14,7 +15,8 @@ production. The edge does not own identity, sessions, or classroom data.
 - `../test/edge-staging.test.mjs`: isolated edge policy regression tests.
 
 Intended public endpoint: `https://moshroids-staging.mrjkirby.workers.dev`.
-Public transport routes are `/health` and `/ws`; the separate POST `/verify`
+Public transport routes are `/health` and `/ws`; `/ws` is pinned to
+`172.22.0.4:8794/ws` over `MOSHROIDS_VPC`. The separate POST `/verify`
 requires server authorization as described below. Query strings and other
 methods/paths are rejected. WebSockets require Origin `https://mrjkirby.github.io` at both
 edge and KNAS. Origin is not authentication: game messages still pass through
@@ -23,8 +25,11 @@ the existing server's classroom-token/session gate before any join.
 VPC Service `01a12255-8c8b-7583-88d8-0093b1c2f779` was created on 2026-10-09,
 named `moshroids-staging`, HTTP port 8794 only, hostname `moshroids-realtime`,
 using existing Astroids-KNAS tunnel `0df1a0e1-0d74-4873-85e6-4f6392b602d1`.
-It is a service binding, NOT a broad network binding. No DNS/public tunnel route,
-new connector, router forwarding or raw public NAS port is needed.
+It remains unchanged and serves `/health`. The WebSocket and authenticated
+verification routes use the staging-only VPC Network binding to that same
+existing tunnel and the fixed private staging container address. No
+DNS/public tunnel route, new connector, router forwarding or raw public NAS
+port is needed.
 
 The public transport handler has no storage or game authority. It passes
 upgrades intact and forwards neither cookies nor Authorization headers. The
@@ -40,9 +45,9 @@ From the repository root:
 ```sh
 node --test server/test/edge-staging.test.mjs
 node --experimental-vm-modules --test server/test/*.test.mjs tests/*.mjs
-npx wrangler@4.149.0 deploy --dry-run --config server/edge-staging/wrangler.json
+npx wrangler@4.151.1 deploy --dry-run --config server/edge-staging/wrangler.json
 # Only after authorized Cloudflare login, without changing other applications:
-npx wrangler@4.149.0 deploy --config server/edge-staging/wrangler.json
+npx wrangler@4.151.1 deploy --config server/edge-staging/wrangler.json
 node server/edge-staging/probe.mjs
 ```
 
@@ -114,11 +119,11 @@ an arbitrary proxy. No grant, identity or service secret is logged or returned.
 
 Snake `/moshroids-staging` uses the existing authoritative tester gate and issuer.
 Its server passes short-lived grants to this bridge. `gameplay-probe.mjs` runs
-the ordinary KNAS WebSocket protocol through the separate VPC service
-`moshroids-auth-staging`, pinned to that container on private port 8794.
+the ordinary KNAS WebSocket protocol through `MOSHROIDS_VPC`, pinned to
+`172.22.0.4:8794/ws`.
 It checks identity against the server-authenticated expected identity, requires
 KNAS tester authorization, and waits for natural expiry without modifying TTL.
-Original `/health` and `/ws` routing is unchanged.
+`/health` continues to use the existing `moshroids-staging` VPC Service.
 
 The secret is provisioned using Wrangler hidden stdin, never its config file.
 Observability remains disabled. Do not log request bodies or run credential-
@@ -139,3 +144,46 @@ Snake staging returns 401; uncredentialed/browser edge requests return 403.
 Real authenticated gameplay count is zero: existing SUPERMRKIRBY sign-in with
 LLP Tester Mode enabled is still required. Synthetic protocol tests are not
 live EDU issuance/consume/gameplay proof.
+
+### VPC Network WebSocket experiment
+
+The staging Worker forwards `/ws` with native `MOSHROIDS_VPC.fetch()` to the
+fixed private target `http://172.22.0.4:8794/ws`. The binding uses the existing
+tunnel `0df1a0e1-0d74-4873-85e6-4f6392b602d1`; neither existing VPC Service was
+changed. Wrangler 4.151.1 deployed Worker version
+`6c834cd3-534e-439a-8e94-3555bf5fab60`.
+
+Real Cloudflare/KNAS verification passed:
+
+- External WSS upgrade, text traffic, ping/pong, invalid-grant close 4003,
+  clean close, abrupt disconnect and reconnect.
+- The existing tester-authorized Snake flow reported issuance, consume, scope,
+  replay, expiry, identity, substitution rejection, connection, messages,
+  shared state, reconnect and resumed identity all PASS. One authenticated
+  tester identity; end-to-end verifier duration was 64 seconds.
+- A 26-socket simultaneous unauthenticated transport burst produced 26
+  successful upgrades (84–171 ms), 26 ping/pong responses over two rounds,
+  and 26 KNAS invalid-token rejections. Authentication deadline measured
+  5005 ms. No game state was created.
+- A separate real 26-client burst terminated all sockets abruptly after
+  liveness ping/pong, then opened 26 reconnects simultaneously. All 26
+  reconnects upgraded and were rejected by KNAS for synthetic invalid resume
+  tokens (142–164 ms handshakes); there were no unexpected close codes.
+
+This is not a 26-player authenticated gameplay/load test. Only one authorized
+tester identity was available; do not reuse its one-time grants or invent
+identities to simulate a classroom. Such a test requires 26 distinct,
+authorized staging test grants. The 26-client tests establish transport,
+abrupt cleanup/reconnect handling, and pre-auth rejection only; they do not
+establish 26-player gameplay capacity. Production student data and
+authentication were not changed.
+
+The probe initially treated a WebSocket `error` event as a synthetic close
+code 1006, obscuring the actual `close` event. It now waits for the real close
+event and reports only a fixed transport boundary if no close arrives.
+Focused tests and the full repository regression suite pass.
+
+No production route, DNS, Firebase, KNAS container/network, public KNAS
+exposure, or VPC Service configuration changed. Roll back by restoring the
+previous staging Worker/config revision or disabling only its workers.dev
+route; production does not use this staging endpoint.
