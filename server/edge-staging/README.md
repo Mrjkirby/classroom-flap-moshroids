@@ -129,8 +129,8 @@ KNAS tester authorization, and waits for natural expiry without modifying TTL.
 
 The secret is provisioned using Wrangler hidden stdin, never its config file.
 Observability remains disabled. Do not log request bodies or run credential-
-dumping debugging commands. Keep Firebase selected and the earlier unpublished
-GitHub commit chain local unless separately approved for publication.
+dumping debugging commands. Firebase remains selected; this Worker is staging
+only.
 
 ### Release verification — 2026-10-12
 
@@ -189,3 +189,23 @@ No production route, DNS, Firebase, KNAS container/network, public KNAS
 exposure, or VPC Service configuration changed. Roll back by restoring the
 previous staging Worker/config revision or disabling only its workers.dev
 route; production does not use this staging endpoint.
+
+### One-time launch/session release — 2026-10-20
+
+The isolated auth-staging image
+`sha256:5b67ddd25ccfd155d79a60eb296f86eea0beb6c1ad935edb59e3c6ec425a8cbc`
+and Worker version `9adf60bd-b64b-4fe7-8b1b-6cf8663cadb1` are deployed. The
+GitHub Pages staging client from commit `911ca3f` returns HTTP 200. A fresh
+browser load shows no pilot-name login form and remains offline until launched
+from an authorized classroom session.
+
+Public probes confirmed CORS preflight 204, an unknown launch grant rejected
+with 401, 26 unauthenticated socket upgrades/pongs, and rejection of all 26
+invalid session credentials. The authentication deadline remained about five
+seconds and a forged resume credential was rejected. These are fail-closed
+transport checks, not a positive live grant or authenticated gameplay test.
+The full local regression suite passed 95/95; synthetic performance tests are
+not NAS or classroom capacity evidence. A real authorized one-time launch,
+replay/refresh/reconnect, and 26 distinct authorized learners remain untested.
+Keep `classroomReady:false` and Firebase as the production default until those
+gates pass.

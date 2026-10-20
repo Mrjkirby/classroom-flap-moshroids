@@ -97,22 +97,24 @@ tokens manually or make browser-side calls to the private issuer.
 
 GitHub Pages serves the `main` branch. The staging page is published with that
 branch; publishing it does not change the production transport selector.
+The public staging page and isolated KNAS redemption/WebSocket routes are live,
+but a real authorized portal launch and authenticated classroom load test are
+still required before `classroomReady` or production transport can change.
 
-An isolated `moshroids-realtime` container runs on KNAS loopback **127.0.0.1:8794**
-in deny-all standby while issuer/launcher release and public WSS are incomplete.
-No existing KNAS service was repurposed. See [server setup](server/README.md) and
-[operation inventory, measurements and release gate](server/TRANSPORT-AUDIT.md).
+The original `moshroids-realtime` container remains in deny-all standby; the
+authenticated staging service is separate. No existing KNAS service was
+repurposed. See [server setup](server/README.md) and [operation inventory,
+measurements and release gate](server/TRANSPORT-AUDIT.md).
 
-The dedicated [Astroids-KNAS connector preparation](server/cloudflared/README.md)
-reuses the existing isolated Docker bridge without altering the realtime server.
-It uses a pinned official Cloudflare image and a private read-only token file;
-the connector is now healthy. Firebase remains selected. The isolated
-[Workers VPC staging edge](server/edge-staging/README.md) exposes public `/health`
-and `/ws` plus a server-credential-protected POST `/verify` for the existing
-Snake tester-only staging control. This fixed probe reaches only the private
-auth-staging container. It does not change the public game's transport or
-enable the public standby server. Live authenticated verification still
-requires the existing SUPERMRKIRBY session and enabled LLP Tester Mode.
+The dedicated [Astroids-KNAS connector](server/cloudflared/README.md) reuses the
+existing isolated Docker bridge. The original `moshroids-realtime` service
+remains deny-all; the separate private auth-staging service handles launch
+redemption and game sessions. The isolated [Workers VPC staging
+edge](server/edge-staging/README.md) exposes `/health`, `/ws`, and
+`/api/launch/redeem`, plus a server-credential-protected POST `/verify` for the
+existing Snake tester-only staging control. Firebase remains selected. A real
+authorized portal launch and authenticated class-size test are still required
+before the public readiness gate or production transport can change.
 
 Verification commands:
 

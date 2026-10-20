@@ -68,3 +68,8 @@ reuse student cookies.
   End-to-end live LLP launch, one-use/replay, refresh and authenticated 26
   distinct classroom accounts remain unverified; do not infer those passes from
   synthetic tests.
+- Worker version `9adf60bd-b64b-4fe7-8b1b-6cf8663cadb1` and the Pages client
+  from commit `911ca3f` are live. Public invalid-token/session rejection and
+  the staging page's fail-closed direct access were verified. A positive
+  authorized launch is still required; `classroomReady:false` and the Firebase
+  production default remain unchanged.
