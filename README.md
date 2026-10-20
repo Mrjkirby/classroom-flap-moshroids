@@ -43,76 +43,60 @@ GitHub Pages serves `teams/index.html` directly at https://mrjkirby.github.io/cl
 ## KNAS realtime transport (gated; Firebase still default)
 
 The [private EDU-authenticated staging instance](server/auth-staging/README.md)
-uses the real issuer on the existing Snake Site. It is separate from the
-deny-all server/public staging edge and publishes no ports. Its readiness does
-not authorize a production transport switch.
+uses the existing Snake/LLP issuer. It is separate from the public deny-all
+server and publishes no ports. Firebase remains the production default and
+rollback until staging verification is complete.
 
 `src/transport/config.js` selects `firebase` (default) or `knas`. All player,
 asteroid/MR. K, drop, Teams and 1VW networking follows this selector. KNAS mode
 does not import Firebase; rollback adapters retain the existing implementation.
 Rendering, local physics, collisions, weapons, spelling and questions remain in
-the browser. `connection.js` owns the socket, in-memory credentials, heartbeat,
-bounded reconnect and request acknowledgements; `knas-store.js` owns replicated
-caches; `knas-player.js` and `knas-shared.js` adapt the existing game interfaces.
+the browser. `connection.js` owns the socket, temporary session credentials,
+heartbeat, bounded reconnect and request acknowledgements; `knas-store.js` owns
+replicated caches; `knas-player.js` and `knas-shared.js` adapt the existing game
+interfaces.
 
 The selected KNAS configuration requires `websocketUrl` and a
 `requestLaunch(roomId)` callback returning a fresh grant from the existing
-classroom session. The server, not that callback, authorizes identity. No PIN,
-identity override, service secret or token belongs in a URL. Missing launch
-configuration fails closed, never falls back to anonymous identity.
+classroom session. The server consumes it at `POST /api/launch/redeem`, then
+issues a separate five-minute KNAS session. Only that session credential is
+sent over WebSocket and it rotates on reconnect. A tab-scoped session copy
+allows a page refresh without reusing the launch grant. Missing launch
+configuration fails closed; it never falls back to anonymous identity.
 
 ### Isolated playable client
 
 [`knas-staging/`](knas-staging/) is a dedicated static shell around the common
-game implementation. It pins KNAS to
+game implementation. Its intended public page is
+`https://mrjkirby.github.io/classroom-flap-moshroids/knas-staging/`. It pins KNAS to
 `wss://moshroids-staging.mrjkirby.workers.dev/ws`; it cannot select Firebase or
 override the endpoint from a URL. It displays **MOSHROIDS — KNAS STAGING** and
-does not load Firebase SDK modules. The production entry pages keep the Firebase
+does not load Firebase SDK modules. Production entry pages keep the Firebase
 default.
 
-The page deliberately does not mint or store grants. It must be opened by the
-existing authorized Snake/LLP launcher so it has a trusted `window.opener`.
-The client requests a launch with `postMessage` to
-`https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site`:
+The existing authenticated Snake/LLP launcher must issue every launch token.
+It may open the page using a one-time URL fragment:
 
-```js
-{ type: 'moshroids:launch-request', requestId, roomId }
+```text
+https://mrjkirby.github.io/classroom-flap-moshroids/knas-staging/#t=ml1_<64-hex>&roomId=classroom&expiresAt=<ISO-8601>
 ```
 
-The launcher must validate the existing authenticated tester session and use
-its server-side grant issuer, then reply to the staging page's exact origin,
-`https://mrjkirby.github.io`, with:
+The fragment is removed from browser history before launch; unlike a query
+string, it is not sent to GitHub Pages, Cloudflare, or referrer logs. The staging
+page also supports the existing exact-origin opener handoff from
+`https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site`. Both paths accept only
+a fresh `ml1_` token, audience `moshroids`, a permitted room and an expiry no
+more than two minutes away. The launcher must never include identity or service
+secrets.
 
-```js
-{
-  type: 'moshroids:launch-grant',
-  requestId,
-  grant: { accessToken, audience: 'moshroids', expiresAt, roomId }
-}
-```
+KNAS verifies and atomically consumes each grant through the existing LLP
+service. It derives identity there, creates a separate reconnectable game
+session, and never accepts identity fields from the browser. Direct access
+without an unexpired session or a fresh portal launch is rejected. Do not paste
+tokens manually or make browser-side calls to the private issuer.
 
-The access token must be a fresh `ml1_` token and expire within two minutes.
-The browser validates the exact opener, origin, request ID, audience, room (if
-provided), format and expiry; KNAS remains the authoritative verifier. The
-launcher must use exact `targetOrigin`, must not put the token in a URL or
-persistent storage, and must not return identity or secret fields. The client
-keeps the grant only long enough to send the WebSocket hello; resume credentials
-remain in memory.
-
-The staging shell and this handoff contract are implemented and locally tested.
-The source-side handler is not part of this repository, and this pass does not
-inspect or change the Snake/EDU application. Until its authorized launch page
-implements this handoff (or a compatible adapter), the client cannot obtain a
-real grant or be used for authenticated play. Do not replace the handoff with a
-manually pasted token, test identity or browser-side API call.
-
-The static GitHub Pages deployment currently serves the `main` branch, while
-this checkout contains unpublished commits beyond `origin/main`. Publishing
-the new page from this checkout would also publish that pending commit chain;
-there is no separate staging Pages target configured. The page is therefore
-not deployed by this change. Its intended URL after an isolated static staging
-deployment is
-`https://mrjkirby.github.io/classroom-flap-moshroids/knas-staging/`.
+GitHub Pages serves the `main` branch. The staging page is published with that
+branch; publishing it does not change the production transport selector.
 
 An isolated `moshroids-realtime` container runs on KNAS loopback **127.0.0.1:8794**
 in deny-all standby while issuer/launcher release and public WSS are incomplete.

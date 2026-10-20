@@ -8,6 +8,27 @@ function reject(socket, status, message) {
   socket.end(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
 }
 
+function json(response, status, body, origin) {
+  const headers = { 'content-type': 'application/json', 'cache-control': 'no-store' };
+  if (origin) {
+    headers['access-control-allow-origin'] = origin;
+    headers.vary = 'Origin';
+  }
+  response.writeHead(status, headers);
+  response.end(JSON.stringify(body));
+}
+
+async function readJson(request, limit = 2048) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) throw new Error('Request body too large.');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
 export function createMoshroidsServer({
   authenticate,
   allowedOrigins = [],
@@ -26,6 +47,47 @@ export function createMoshroidsServer({
     if (request.url === '/health') {
       response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return response.end(JSON.stringify({ ok: true, classroomReady: ready, serverNow: clock(), ...registry.status() }));
+    }
+    if (request.url === '/api/launch/redeem') {
+      const origin = request.headers.origin;
+      const originAllowed = origin ? allowed.has(origin) : allowMissingOrigin;
+      if (!originAllowed) return json(response, 403, { ok: false });
+      if (request.method === 'OPTIONS') {
+        response.writeHead(204, {
+          'access-control-allow-origin': origin || '',
+          'access-control-allow-methods': 'POST',
+          'access-control-allow-headers': 'content-type',
+          'access-control-max-age': '600',
+          'cache-control': 'no-store',
+          vary: 'Origin',
+        });
+        return response.end();
+      }
+      if (request.method !== 'POST') return json(response, 405, { ok: false }, origin);
+      if (!ready) return json(response, 503, { ok: false }, origin);
+      if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
+        return json(response, 415, { ok: false }, origin);
+      }
+      void (async () => {
+        try {
+          const body = await readJson(request);
+          if (!body || Object.keys(body).sort().join() !== 'roomId,token' ||
+            typeof body.token !== 'string' || !/^ml1_[a-f0-9]{64}$/.test(body.token) ||
+            !roomMode(body.roomId)) return json(response, 400, { ok: false }, origin);
+          const identity = await authenticate({ accessToken: body.token, roomId: body.roomId, origin });
+          if (!identity?.studentId || !identity?.displayName) return json(response, 401, { ok: false }, origin);
+          const session = sessions.create(identity, body.roomId, origin);
+          return json(response, 200, { ok: true, sessionToken: session.resumeToken, expiresAt: session.expiresAt }, origin);
+        } catch (error) {
+          if (error?.message === 'Request body too large.') return json(response, 413, { ok: false }, origin);
+          if (error instanceof SyntaxError) return json(response, 400, { ok: false }, origin);
+          if (error?.message === 'MOSHROIDS identity service is unavailable.') {
+            return json(response, 503, { ok: false }, origin);
+          }
+          return json(response, 401, { ok: false }, origin);
+        }
+      })();
+      return;
     }
     response.writeHead(404).end();
   });
@@ -57,23 +119,15 @@ export function createMoshroidsServer({
         const message = parsed.value;
         if (!session) {
           if (authenticating) return connection.close(4003, 'Authentication is already in progress.');
-          const allowedFields = ['type', 'roomId', 'accessToken', 'resumeToken'];
+          const allowedFields = ['type', 'roomId', 'resumeToken'];
           if (message.type !== 'hello' || !roomMode(message.roomId) ||
             Object.keys(message).some(key => !allowedFields.includes(key)) ||
-            (typeof message.accessToken === 'string') === (typeof message.resumeToken === 'string')) {
+            typeof message.resumeToken !== 'string') {
             return connection.close(4003, 'Authenticate before joining.');
           }
           authenticating = true;
           try {
-            let gameSession;
-            if (typeof message.resumeToken === 'string') {
-              gameSession = sessions.resume(message.resumeToken, message.roomId, origin);
-            } else {
-              const identity = await authenticate({ accessToken: message.accessToken, roomId: message.roomId, origin });
-              if (closed) return;
-              if (!identity?.studentId || !identity?.displayName) throw new Error('Invalid identity.');
-              gameSession = sessions.create(identity, message.roomId, origin);
-            }
+            const gameSession = sessions.resume(message.resumeToken, message.roomId, origin);
             const identity = gameSession.identity;
             const studentId = safeText(identity?.studentId, 96);
             const displayName = safeText(identity?.displayName, 32);

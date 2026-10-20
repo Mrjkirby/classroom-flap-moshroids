@@ -110,8 +110,30 @@ function transportFailure(error) {
 }
 
 export async function connectPrivate(binding, hello) {
+  let resumeToken = hello.resumeToken;
+  if (typeof hello.accessToken === 'string') {
+    const body = { token: hello.accessToken, roomId: hello.roomId };
+    for (const [key, value] of Object.entries(hello)) {
+      if (!['type', 'accessToken', 'roomId'].includes(key)) body[key] = value;
+    }
+    const response = await binding.fetch(new Request('http://moshroids-realtime:8794/api/launch/redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'https://mrjkirby.github.io' },
+      body: JSON.stringify(body),
+      redirect: 'manual',
+    }));
+    if ([400, 401, 403].includes(response.status)) return rejectedClient();
+    if (!response.ok) throw new UpgradeFailure(response.status);
+    const result = await response.json();
+    if (result?.ok !== true || typeof result.sessionToken !== 'string' ||
+        !/^mr1_[a-f0-9]{64}$/.test(result.sessionToken)) throw new UpgradeFailure(502);
+    resumeToken = result.sessionToken;
+  }
+  if (typeof resumeToken !== 'string' || !/^mr1_[a-f0-9]{64}$/.test(resumeToken)) {
+    return rejectedClient();
+  }
   const key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
-  const response = await binding.fetch(new Request('http://172.22.0.4:8794/ws', {
+  const response = await binding.fetch(new Request('http://moshroids-realtime:8794/ws', {
     headers: { Upgrade: 'websocket', Connection: 'Upgrade', Origin: 'https://mrjkirby.github.io',
       'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': '13' }, redirect: 'manual',
   }));
@@ -139,6 +161,10 @@ export async function connectPrivate(binding, hello) {
   ws.addEventListener('close', event => { client.closed = event.code; });
   ws.addEventListener('error', () => { client.errorObserved = true; });
   try { ws.accept(); } catch { throw new SocketFailure('accept'); }
-  try { client.send(hello); } catch { throw new SocketFailure('send'); }
+  try { client.send({ type: 'hello', roomId: hello.roomId, resumeToken }); } catch { throw new SocketFailure('send'); }
   return client;
+}
+
+function rejectedClient() {
+  return { messages: [], closed: 4003, send() {}, close() {}, async wait() {} };
 }

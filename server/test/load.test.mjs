@@ -4,19 +4,40 @@ import { createMoshroidsServer } from '../src/app.mjs';
 
 test('26 concurrent authenticated clients join, exchange state, and clean up', async () => {
   let messageCount = 0;
+  const grants = new Map();
   const app = createMoshroidsServer({
     allowMissingOrigin: true,
-    authenticate: async ({ accessToken }) => ({ studentId: accessToken.slice(5), displayName: accessToken.slice(5) }),
+    authenticate: async ({ accessToken, roomId }) => {
+      const grant = grants.get(accessToken);
+      grants.delete(accessToken);
+      if (!grant || grant.roomId !== roomId) throw new Error('Invalid fixture grant');
+      return { studentId: grant.id, displayName: grant.id };
+    },
     log: () => {},
   });
   const address = await app.listen();
   const url = `ws://127.0.0.1:${address.port}/ws`;
-  const clients = await Promise.all([...Array(26)].map((_, index) => new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
-    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'hello', accessToken: `test:p${index}`, roomId: 'classroom' })), { once: true });
-    socket.addEventListener('message', event => { messageCount += 1; const message = JSON.parse(event.data); if (message.type === 'welcome') resolve(socket); });
-    socket.addEventListener('error', reject, { once: true });
-  })));
+  const clients = await Promise.all([...Array(26)].map(async (_, index) => {
+    const id = `p${index}`;
+    const token = 'ml1_' + Buffer.from(id).toString('hex').padEnd(64, '0').slice(0, 64);
+    grants.set(token, { id, roomId: 'classroom' });
+    const endpoint = new URL(url);
+    endpoint.protocol = 'http:';
+    endpoint.pathname = '/api/launch/redeem';
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token, roomId: 'classroom' }),
+    });
+    assert.equal(response.status, 200);
+    const { sessionToken } = await response.json();
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(url);
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'hello', resumeToken: sessionToken, roomId: 'classroom' })), { once: true });
+      socket.addEventListener('message', event => { messageCount += 1; const message = JSON.parse(event.data); if (message.type === 'welcome') resolve(socket); });
+      socket.addEventListener('error', reject, { once: true });
+    });
+  }));
   try {
     await Promise.all(clients.map((socket, index) => { socket.send(JSON.stringify({ type: 'state', state: { x: index, y: index, guns: index % 5 } })); return Promise.resolve(); }));
     await new Promise(resolve => setTimeout(resolve, 150));

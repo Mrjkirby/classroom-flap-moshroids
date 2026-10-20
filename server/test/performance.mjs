@@ -6,7 +6,7 @@ import { once } from 'node:events';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const modes = ['classroom', 'classroom-teams', 'classroom-1vw'];
 const grants = modes.flatMap(roomId => Array.from({ length: 26 }, (_, i) =>
-  ({ roomId, id: `fixture-${i}`, token: randomBytes(32).toString('hex') })));
+  ({ roomId, id: `fixture-${i}`, token: 'ml1_' + randomBytes(32).toString('hex') })));
 const host = fork(new URL('./benchmark-host.mjs', import.meta.url), { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
 host.send({ grants });
 const [{ port }] = await once(host, 'message');
@@ -14,6 +14,15 @@ let bytesIn = 0, bytesOut = 0, received = 0, sent = 0, unexpectedCloses = 0;
 const latencies = [], reports = [], sockets = new Set();
 const start = performance.now();
 async function client(grant, resumeToken) {
+  if (!resumeToken) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/launch/redeem`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: grant.token, roomId: grant.roomId }),
+    });
+    assert.equal(response.status, 200);
+    resumeToken = (await response.json()).sessionToken;
+  }
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`); sockets.add(socket);
   const data = { socket, messages: [], pending: new Map(), sequence: 0, players: new Map(), shared: new Map(), intentional: false };
   data.send = value => { const text = JSON.stringify(value); bytesOut += Buffer.byteLength(text); sent++; socket.send(text); };
@@ -44,7 +53,7 @@ async function client(grant, resumeToken) {
   });
   socket.addEventListener('close', () => { sockets.delete(socket); if (!data.intentional) unexpectedCloses++; });
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
-  data.send({ type: 'hello', roomId: grant.roomId, ...(resumeToken ? { resumeToken } : { accessToken: grant.token }) });
+  data.send({ type: 'hello', roomId: grant.roomId, resumeToken });
   for (let i = 0; !data.ready && i < 500; i++) await delay(10);
   assert.equal(data.ready, true); assert.equal(data.id, grant.id);
   data.close = async () => { data.intentional = true; socket.close(); for (let i = 0; socket.readyState !== 3 && i < 100; i++) await delay(5); };

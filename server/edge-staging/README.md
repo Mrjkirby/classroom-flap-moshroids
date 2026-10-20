@@ -5,7 +5,7 @@ production. The edge does not own identity, sessions, or classroom data.
 
 ## Ownership and routing
 
-- `worker.mjs`: exact GET path allowlist, Origin guard, pinned VPC forwarding.
+- `worker.mjs`: exact path/method allowlist, Origin guard, and fixed service forwarding.
 - `wrangler.json`: existing Cloudflare account, two VPC Service bindings, and
   the staging VPC Network binding.
 - `verify-bridge.mjs`: server-only authorization and fixed probe request validation.
@@ -14,20 +14,22 @@ production. The edge does not own identity, sessions, or classroom data.
   checks using synthetic invalid credentials only. No authentication bypass.
 - `../test/edge-staging.test.mjs`: isolated edge policy regression tests.
 
-Intended public endpoint: `https://moshroids-staging.mrjkirby.workers.dev`.
-Public transport routes are `/health` and `/ws`; `/ws` is pinned to
-`172.22.0.4:8794/ws` over `MOSHROIDS_VPC`. The separate POST `/verify`
-requires server authorization as described below. Query strings and other
-methods/paths are rejected. WebSockets require Origin `https://mrjkirby.github.io` at both
-edge and KNAS. Origin is not authentication: game messages still pass through
-the existing server's classroom-token/session gate before any join.
+Public endpoint: `https://moshroids-staging.mrjkirby.workers.dev`.
+The deployed Worker exposes `/health`, `/ws`, POST `/api/launch/redeem`, and
+the server-authorized POST `/verify`. Redemption and WebSocket sessions route
+only to the isolated `MOSHROIDS_AUTH_STAGING` VPC Service. `/health` continues
+to report the public deny-all service, so `classroomReady:false` remains the
+explicit cutover gate. Exact Origin `https://mrjkirby.github.io` is required
+for browser game requests; Origin is not authentication, and all launch tokens
+are verified/consumed by the existing LLP authority. Query strings and unknown
+paths/methods are rejected.
 
 VPC Service `01a12255-8c8b-7583-88d8-0093b1c2f779` was created on 2026-10-09,
 named `moshroids-staging`, HTTP port 8794 only, hostname `moshroids-realtime`,
 using existing Astroids-KNAS tunnel `0df1a0e1-0d74-4873-85e6-4f6392b602d1`.
-It remains unchanged and serves `/health`. The WebSocket and authenticated
-verification routes use the staging-only VPC Network binding to that same
-existing tunnel and the fixed private staging container address. No
+It remains unchanged and serves `/health`. The authenticated launch and WebSocket routes use the existing staging-only
+VPC Service binding for the private auth container. The verifier-only gameplay
+probe likewise reaches that service; no user-selected target is accepted. No
 DNS/public tunnel route, new connector, router forwarding or raw public NAS
 port is needed.
 

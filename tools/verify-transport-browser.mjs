@@ -68,37 +68,15 @@ try {
     await context.close();
   }
   const stagingContext = await browser.newContext();
-  await stagingContext.addInitScript(({ launcherOrigin }) => {
-    const opener = {
-      postMessage(message, targetOrigin) {
-        if (targetOrigin !== launcherOrigin) return;
-        setTimeout(() => {
-          const event = new MessageEvent('message', {
-            origin: launcherOrigin,
-            data: {
-              type: 'moshroids:launch-grant',
-              requestId: message.requestId,
-              grant: {
-                accessToken: 'ml1_' + 'b'.repeat(64),
-                audience: 'moshroids',
-                expiresAt: new Date(Date.now() + 30000).toISOString(),
-                roomId: 'classroom',
-              },
-            },
-          });
-          Object.defineProperty(event, 'source', { value: opener });
-          window.dispatchEvent(event);
-        }, 0);
-      },
-    };
-    Object.defineProperty(window, 'opener', { value: opener });
-  }, { launcherOrigin: 'https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site' });
   const stagingPage = await stagingContext.newPage();
   const stagingErrors = [], stagingFirebase = [], websocketUrls = [];
   stagingPage.on('pageerror', error => stagingErrors.push(error.message));
   stagingPage.on('request', req => { if (/firebase/.test(req.url())) stagingFirebase.push(req.url()); });
   stagingPage.on('websocket', socket => websocketUrls.push(socket.url()));
-  await stagingPage.goto(origin + '/knas-staging/');
+  const stagingToken = 'ml1_' + 'b'.repeat(64);
+  const expiry = encodeURIComponent(new Date(Date.now() + 30000).toISOString());
+  await stagingPage.goto(`${origin}/knas-staging/#t=${stagingToken}&roomId=classroom&expiresAt=${expiry}`);
+  assert.equal(await stagingPage.evaluate(() => location.hash), '');
   await stagingPage.waitForFunction(() => document.getElementById('pilotLoginOverlay')?.classList.contains('hidden'));
   assert.match(await stagingPage.locator('.staging-banner').textContent(), /MOSHROIDS — KNAS STAGING/);
   const serverPlayer = () => realtime.registry.get('classroom').players.get('browser-test');
@@ -129,7 +107,7 @@ try {
   assert.deepEqual(websocketUrls, [testWebSocketUrl]);
   assert.equal(stagingFirebase.length, 0, 'the dedicated staging page must not request Firebase');
   assert.deepEqual(stagingErrors, []);
-  console.log('KNAS staging page: synthetic opener grant, playable game shell, fixed local WSS, shared actions; zero Firebase requests, zero page errors');
+  console.log('KNAS staging page: secure fragment consumed once, playable game shell, fixed local WSS, shared actions; zero Firebase requests, zero page errors');
   await stagingContext.close();
 
   const context = await browser.newContext(); const page = await context.newPage();

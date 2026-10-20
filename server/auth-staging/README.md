@@ -1,9 +1,10 @@
 # Private EDU-authenticated staging
 
-This separate service reuses the existing MOSHROIDS image and authenticated
-verifier. It does not modify the deny-all `moshroids-realtime` service or its
-127.0.0.1:8794 mapping. The public staging Worker/VPC remains bound to that
-deny-all service. Firebase and the GitHub Pages client remain unchanged.
+This separate service runs the existing MOSHROIDS verifier and game server with
+the new one-time-token redemption and reconnect-session flow. It does not
+modify the deny-all `moshroids-realtime` service or its 127.0.0.1:8794 mapping.
+The isolated Worker may route only `/api/launch/redeem` and `/ws` to this
+authenticated service. Firebase remains the production default.
 
 Deploy this directory as a separate Compose project, `moshroids-auth-staging`,
 under the same-named KNAS docker directory. The only network is the existing
@@ -16,9 +17,10 @@ Never commit, print or log it. Do not run unredacted `docker inspect` or
 
 The existing per-process `MOSHROIDS_STANDBY=false` flag activates real token
 verification **only on this isolated instance**. Its private health therefore
-reports classroomReady=true, which is not production readiness. The original
-server and public staging edge must continue reporting classroomReady=false.
-This is not a tester identity override or a second authentication mechanism.
+reports classroomReady=true, which is configuration health, not release
+readiness. The original server/public health remains classroomReady=false until
+the end-to-end, security, reconnect and capacity gates pass. This is not a
+tester identity override or a second authentication mechanism.
 
 The issuer is Snake version 29, source `7a8cdab`, integrated onto version 28.
 Same-origin POST `/api/moshroids` with action `moshroidsIssueLaunch` and an
@@ -28,11 +30,11 @@ The single-use grant then follows the normal verifier, expiry, room/scope and
 atomic consume checks. This service accepts only legitimately issued identities,
 not fixtures, names, injected cookies or static bearer tokens.
 
-Next verification requires an authorized TEST login through the existing Snake
-login/LLP entry. Do not create synthetic live learners or reuse student cookies.
-Only after private authenticated verification may an explicitly authorized
-external staging route be connected. This configuration intentionally does not
-reroute the existing Worker or production frontend.
+The staging page redeems the grant over the exact-origin HTTPS API; the WebSocket
+accepts only the separate five-minute KNAS session credential. The browser
+removes the one-time launch fragment immediately, and refresh/reconnect uses a
+rotating tab-scoped session credential. Never create synthetic live learners or
+reuse student cookies.
 
 ## Release verification (2026-10-12)
 
@@ -55,6 +57,14 @@ reroute the existing Worker or production frontend.
 - Positive live TEST issuance/consume and authenticated gameplay remain untested.
   Local tests used synthetic fixtures; these are not live EDU identities.
 
-The existing public staging Worker is intentionally unchanged. A real authorized
-TEST session is the next prerequisite, followed by private positive verification
-before connecting an external authenticated staging route.
+## Session launch update (2026-10-20)
+
+- Updated isolated image: `sha256:5b67ddd25ccfd155d79a60eb296f86eea0beb6c1ad935edb59e3c6ec425a8cbc`.
+- `/api/launch/redeem` delegates one-use token validation/consumption to the
+  existing LLP verifier and returns a separate session token. WebSocket hello
+  accepts only that session credential; reconnect rotates it without extending
+  the five-minute absolute lifetime.
+- The public staging Worker and GitHub Pages release must use the new flow.
+  End-to-end live LLP launch, one-use/replay, refresh and authenticated 26
+  distinct classroom accounts remain unverified; do not infer those passes from
+  synthetic tests.

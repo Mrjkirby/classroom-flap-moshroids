@@ -21,7 +21,7 @@ export async function verifyBridge(request, env, run = runGameplayProbe) {
   // A server-only probe, not a browser WebSocket proxy or alternate sign-in.
   if (request.headers.has('origin') || request.headers.has('cookie') ||
     !await serviceAuthorized(request, env.MOSHROIDS_SERVICE_SECRET)) return reply({ ok: false }, 403);
-  if (!env.MOSHROIDS_VPC) return reply({ ok: false }, 503);
+  if (!env.MOSHROIDS_AUTH_STAGING) return reply({ ok: false }, 503);
   try {
     const raw = await request.text();
     if (raw.length > 2048) return reply({ ok: false }, 413);
@@ -30,7 +30,7 @@ export async function verifyBridge(request, env, run = runGameplayProbe) {
       !grantValid(body.active) || !grantValid(body.expiring) ||
       typeof body.expectedId !== 'string' || !body.expectedId || body.expectedId.length > 96)
       return reply({ ok: false }, 400);
-    const result = await run(body, hello => connectPrivate(env.MOSHROIDS_VPC, hello));
+    const result = await run(body, hello => connectPrivate(env.MOSHROIDS_AUTH_STAGING, hello));
     if (result.failure) console.warn(JSON.stringify({ event: 'staging_probe_failure', ...result.failure }));
     return reply(result);
   } catch { return reply({ ok: false }, 502); }

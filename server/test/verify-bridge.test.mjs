@@ -11,12 +11,12 @@ const request = (headers = {}, body = input()) => new Request('https://edge.inva
   method: 'POST', headers: { authorization: 'Bearer ' + secret, ...headers }, body: JSON.stringify(body),
 });
 test('bridge rejects browser Origin/cookies and missing/wrong service credentials', async () => {
-  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_VPC: {} };
+  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_AUTH_STAGING: {} };
   for (const headers of [{origin:'https://snake.invalid'}, {cookie:'fixture'}, {authorization:''}, {authorization:'forged'}])
     assert.equal((await verifyBridge(request(headers), env)).status, 403);
 });
 test('bridge is target-pinned and rejects extra identity/target/command fields', async () => {
-  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_VPC: {} };
+  const env = { MOSHROIDS_SERVICE_SECRET: secret, MOSHROIDS_AUTH_STAGING: {} };
   for (const key of ['target', 'studentId', 'command'])
     assert.equal((await verifyBridge(request({}, { ...input(), [key]: 'forged' }), env)).status, 400);
   assert.equal((await verifyBridge(request(), env, async () => ({ checks: { consume: true } }))).status, 200);
@@ -26,13 +26,13 @@ test('probe diagnostics report only a fixed stage and upgrade status, never priv
   const rejected = await runGameplayProbe(input(), hello => connectPrivate({
     fetch: async request => {
       upstreamRequest = request;
-      return new Response('private upstream body', { status: 400 });
+      return new Response('private upstream body', { status: 502 });
     },
   }, hello));
-  assert.deepEqual(rejected.failure, { stage: 'substitution', upgradeStatus: 400 });
-  assert.equal(upstreamRequest.url, 'http://172.22.0.4:8794/ws');
+  assert.deepEqual(rejected.failure, { stage: 'substitution', upgradeStatus: 502 });
+  assert.equal(upstreamRequest.url, 'http://moshroids-realtime:8794/api/launch/redeem');
   assert.equal(upstreamRequest.headers.get('Origin'), 'https://mrjkirby.github.io');
-  assert.equal(upstreamRequest.headers.get('Upgrade'), 'websocket');
+  assert.equal(upstreamRequest.method, 'POST');
   const thrown = await runGameplayProbe(input(), async () => { throw Error('secret exception detail'); });
   assert.deepEqual(thrown.failure, { stage: 'substitution' });
   const vpc = await runGameplayProbe(input(), async () => { throw Error('ProxyError: http_upgrade_failed secret'); });
@@ -42,7 +42,7 @@ test('probe diagnostics report only a fixed stage and upgrade status, never priv
 });
 test('probe exercises real loopback protocol including replay, expiry, shared claims and resume', async () => {
   const data = input(); let now = Date.now(); const used = new Set();
-  const app = createMoshroidsServer({ allowMissingOrigin: true, clock: () => now,
+  const app = createMoshroidsServer({ allowMissingOrigin: true, allowedOrigins: ['https://mrjkirby.github.io'], clock: () => now,
     authenticate: async ({accessToken, roomId}) => {
       if (roomId !== 'classroom' || used.has(accessToken) || now >= Date.parse(data.active.expiresAt) ||
         ![data.active.accessToken, data.expiring.accessToken].includes(accessToken)) throw Error('denied');
@@ -51,7 +51,24 @@ test('probe exercises real loopback protocol including replay, expiry, shared cl
     } });
   const address = await app.listen();
   const sockets = [];
+  let activeRedeemStatus;
   async function connect(hello) {
+    let resumeToken = hello.resumeToken;
+    if (hello.accessToken) {
+      const body = { token: hello.accessToken, roomId: hello.roomId };
+      for (const [key, value] of Object.entries(hello)) {
+        if (!['type', 'accessToken', 'roomId'].includes(key)) body[key] = value;
+      }
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/launch/redeem`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (hello.accessToken === data.active.accessToken && hello.roomId === 'classroom' && Object.keys(body).length === 2 &&
+          activeRedeemStatus === undefined) activeRedeemStatus = response.status;
+      if (!response.ok) return { messages: [], closed: 4003, send() {}, close() {}, async wait() {} };
+      resumeToken = (await response.json()).sessionToken;
+    }
     const socket = new WebSocket('ws://127.0.0.1:' + address.port + '/ws'); sockets.push(socket);
     const client = { messages: [], closed: undefined,
       send: value => socket.send(JSON.stringify(value)),
@@ -63,11 +80,12 @@ test('probe exercises real loopback protocol including replay, expiry, shared cl
     socket.addEventListener('message', e => client.messages.push(JSON.parse(e.data)));
     socket.addEventListener('close', e => { client.closed = e.code; });
     await new Promise((resolve, reject) => { socket.addEventListener('open', resolve); socket.addEventListener('error', reject); });
-    client.send(hello); return client;
+    client.send({ type: 'hello', roomId: hello.roomId, resumeToken }); return client;
   }
   try {
     const result = await runGameplayProbe(data, connect, { clock: () => now, sleep: async ms => { now += ms; } });
-    assert.equal(result.clientCount, 1);
+    assert.equal(activeRedeemStatus, 200);
+    assert.equal(result.clientCount, 1, JSON.stringify(result));
     assert.ok(Object.values(result.checks).every(Boolean), JSON.stringify(result.checks));
     assert.equal(used.size, 1);
   } finally { sockets.forEach(s => s.close()); await app.close(); }

@@ -3,12 +3,14 @@ import net from 'node:net';
 import test from 'node:test';
 import { createMoshroidsServer } from '../src/app.mjs';
 
+const launchToken = id => 'ml1_' + Buffer.from(id).toString('hex').padEnd(64, '0').slice(0, 64);
+
 async function start(options = {}) {
   const app = createMoshroidsServer({
     allowMissingOrigin: true,
     authenticate: async ({ accessToken }) => {
-      if (!accessToken.startsWith('test:')) throw new Error('bad token');
-      const id = accessToken.slice(5);
+      if (!/^ml1_[a-f0-9]{64}$/.test(accessToken)) throw new Error('bad token');
+      const id = Buffer.from(accessToken.slice(4), 'hex').toString('utf8').replace(/\0+$/, '');
       return { studentId: id, displayName: `Pilot ${id}` };
     },
     ...options,
@@ -18,6 +20,22 @@ async function start(options = {}) {
 }
 
 function client(url, token, roomId = 'classroom') {
+  const endpoint = new URL(url);
+  endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:';
+  endpoint.pathname = '/api/launch/redeem';
+  endpoint.search = '';
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, roomId }),
+  }).then(async response => {
+    assert.equal(response.status, 200);
+    const { sessionToken } = await response.json();
+    return connect(url, sessionToken, roomId);
+  });
+}
+
+function connect(url, resumeToken, roomId = 'classroom') {
   const socket = new WebSocket(url);
   const messages = [];
   socket.addEventListener('message', event => messages.push(JSON.parse(event.data)));
@@ -30,7 +48,7 @@ function client(url, token, roomId = 'classroom') {
     throw new Error(`Timed out waiting for ${type}: ${JSON.stringify(messages)}`);
   };
   return new Promise((resolve, reject) => {
-    socket.addEventListener('open', () => { socket.send(JSON.stringify({ type: 'hello', accessToken: token, roomId })); resolve({ socket, messages, wait }); }, { once: true });
+    socket.addEventListener('open', () => { socket.send(JSON.stringify({ type: 'hello', resumeToken, roomId })); resolve({ socket, messages, wait }); }, { once: true });
     socket.addEventListener('error', reject, { once: true });
   });
 }
@@ -47,11 +65,11 @@ async function waitForEvent(clientState, kind) {
 test('health, authenticated join, authoritative time, and player state', async () => {
   const { app, url, health } = await start();
   try {
-    const first = await client(url, 'test:a');
+    const first = await client(url, launchToken('a'));
     const welcome = await first.wait('welcome');
     assert.equal(welcome.studentId, 'a'); assert.ok(Number.isFinite(welcome.serverNow));
     first.socket.send(JSON.stringify({ type: 'state', state: { x: 12, y: 13, angle: 1, velocityX: 2, velocityY: 3, score: 999999, guns: 40 } }));
-    const second = await client(url, 'test:b');
+    const second = await client(url, launchToken('b'));
     const snapshot = await second.wait('welcome');
     assert.equal(snapshot.players.find(player => player.id === 'a').x, 12);
     assert.equal(snapshot.players.find(player => player.id === 'a').score, 0, 'a client cannot choose score');
@@ -86,7 +104,7 @@ test('rejects unexpected browser origins before accepting a WebSocket', async ()
 test('malformed messages close an authenticated connection', async () => {
   const { app, url } = await start();
   try {
-    const player = await client(url, 'test:a');
+    const player = await client(url, launchToken('a'));
     await player.wait('welcome');
     const close = new Promise(resolve => player.socket.addEventListener('close', event => resolve(event.code), { once: true }));
     player.socket.send('{not json');
@@ -98,18 +116,95 @@ test('rejects missing or invalid authentication and invalid rooms', async () => 
   const { app, url } = await start();
   try {
     const socket = new WebSocket(url); await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
-    socket.send(JSON.stringify({ type: 'hello', accessToken: 'bad', roomId: 'not-a-room' }));
+    socket.send(JSON.stringify({ type: 'hello', accessToken: launchToken('direct'), roomId: 'classroom' }));
     const close = await new Promise(resolve => socket.addEventListener('close', event => resolve(event.code), { once: true }));
     assert.equal(close, 4003);
+  } finally { await app.close(); }
+});
+
+test('launch redemption rejects malformed tokens, identity fields, and wrong origins', async () => {
+  const origin = 'https://mrjkirby.github.io';
+  const { app, url } = await start({ allowMissingOrigin: false, allowedOrigins: [origin] });
+  const endpoint = new URL(url);
+  endpoint.protocol = 'http:';
+  endpoint.pathname = '/api/launch/redeem';
+  try {
+    const submit = body => fetch(endpoint, {
+      method: 'POST',
+      headers: { Origin: origin, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    assert.equal((await submit({ token: 'malformed', roomId: 'classroom' })).status, 400);
+    assert.equal((await submit({ token: launchToken('id'), roomId: 'classroom', studentId: 'forged' })).status, 400);
+    assert.equal((await fetch(endpoint, {
+      method: 'POST',
+      headers: { Origin: 'https://attacker.example', 'content-type': 'application/json' },
+      body: JSON.stringify({ token: launchToken('id'), roomId: 'classroom' }),
+    })).status, 403);
+  } finally { await app.close(); }
+});
+
+test('launch redemption creates a separate single-use reconnect session', async () => {
+  let consumed = 0;
+  const { app, url } = await start({
+    authenticate: async ({ accessToken }) => {
+      if (accessToken !== launchToken('one-use') || consumed++) throw new Error('invalid or consumed');
+      return { studentId: 'canonical-id', displayName: 'Canonical Pilot' };
+    },
+  });
+  const endpoint = new URL(url);
+  endpoint.protocol = 'http:';
+  endpoint.pathname = '/api/launch/redeem';
+  try {
+    const redeem = () => fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: launchToken('one-use'), roomId: 'classroom' }),
+    });
+    const first = await redeem();
+    assert.equal(first.status, 200);
+    const { sessionToken, expiresAt } = await first.json();
+    assert.match(sessionToken, /^mr1_[a-f0-9]{64}$/);
+    assert.ok(expiresAt > Date.now());
+    assert.equal((await redeem()).status, 401);
+
+    const player = await connect(url, sessionToken);
+    assert.equal((await player.wait('welcome')).studentId, 'canonical-id');
+    player.socket.close();
+  } finally { await app.close(); }
+});
+
+test('simultaneous redemption creates exactly one game session', async () => {
+  let consumed = false;
+  const { app, url } = await start({
+    authenticate: async ({ accessToken }) => {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      if (accessToken !== launchToken('race') || consumed) throw new Error('already consumed');
+      consumed = true;
+      return { studentId: 'race-id', displayName: 'Race Pilot' };
+    },
+  });
+  const endpoint = new URL(url);
+  endpoint.protocol = 'http:';
+  endpoint.pathname = '/api/launch/redeem';
+  try {
+    const redeem = () => fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: launchToken('race'), roomId: 'classroom' }),
+    });
+    const results = await Promise.all(Array.from({ length: 12 }, redeem));
+    assert.equal(results.filter(result => result.status === 200).length, 1);
+    assert.equal(results.filter(result => result.status === 401).length, 11);
   } finally { await app.close(); }
 });
 
 test('duplicate client is replaced and reconnect receives current state', async () => {
   const { app, url } = await start();
   try {
-    const original = await client(url, 'test:a'); await original.wait('welcome');
+    const original = await client(url, launchToken('a')); await original.wait('welcome');
     const close = new Promise(resolve => original.socket.addEventListener('close', event => resolve(event.code), { once: true }));
-    const replacement = await client(url, 'test:a'); await replacement.wait('welcome');
+    const replacement = await client(url, launchToken('a')); await replacement.wait('welcome');
     assert.equal(await close, 4001); replacement.socket.close();
   } finally { await app.close(); }
 });
@@ -117,7 +212,7 @@ test('duplicate client is replaced and reconnect receives current state', async 
 test('first writer wins asteroid claims and gun drop claims', async () => {
   const { app, url } = await start();
   try {
-    const a = await client(url, 'test:a'); const b = await client(url, 'test:b'); await Promise.all([a.wait('welcome'), b.wait('welcome')]);
+    const a = await client(url, launchToken('a')); const b = await client(url, launchToken('b')); await Promise.all([a.wait('welcome'), b.wait('welcome')]);
     const asteroidId = `epoch-${Math.floor(Date.now() / 1800000)}-field-0-asteroid-1`;
     a.socket.send(JSON.stringify({ type: 'event', event: { kind: 'asteroidDestroyed', id: asteroidId } })); await waitForEvent(b, 'asteroidDestroyed');
     b.socket.send(JSON.stringify({ type: 'event', event: { kind: 'asteroidDestroyed', id: asteroidId } }));
@@ -133,8 +228,8 @@ test('first writer wins asteroid claims and gun drop claims', async () => {
 test('teams, 1vWorld, collision and reset events retain their room boundaries', async () => {
   const { app, url } = await start();
   try {
-    const teams = await client(url, 'test:team', 'classroom-teams');
-    const gauntlet = await client(url, 'test:boss', 'classroom-1vw');
+    const teams = await client(url, launchToken('team'), 'classroom-teams');
+    const gauntlet = await client(url, launchToken('boss'), 'classroom-1vw');
     await Promise.all([teams.wait('welcome'), gauntlet.wait('welcome')]);
     teams.socket.send(JSON.stringify({ type: 'event', event: { kind: 'teamVolley', id: 'volley' } }));
     gauntlet.socket.send(JSON.stringify({ type: 'event', event: { kind: 'gauntletAction', id: 'cannon' } }));
@@ -147,7 +242,7 @@ test('teams, 1vWorld, collision and reset events retain their room boundaries', 
 test('a server restart starts empty and requires clients to authenticate and rejoin', async () => {
   const first = await start();
   try {
-    const player = await client(first.url, 'test:restart');
+    const player = await client(first.url, launchToken('restart'));
     await player.wait('welcome');
     assert.equal((await (await fetch(first.health)).json()).connections, 1);
     player.socket.close();

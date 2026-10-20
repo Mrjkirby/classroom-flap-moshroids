@@ -18,6 +18,14 @@ class FakeSocket extends EventTarget {
 }
 const grant = roomId => ({ accessToken: 'ml1_' + 'a'.repeat(64), audience: 'moshroids',
   expiresAt: new Date(Date.now() + 30000).toISOString(), roomId });
+const sessionToken = 'mr1_' + 'b'.repeat(64);
+const redemption = async (url, options) => {
+  assert.equal(new URL(url).pathname, '/api/launch/redeem');
+  assert.equal(options.credentials, 'omit');
+  const body = JSON.parse(options.body);
+  assert.equal(body.roomId, 'classroom');
+  return Response.json({ ok: true, sessionToken, expiresAt: Date.now() + 5 * 60_000 });
+};
 
 test('KNAS connector refuses plaintext public endpoints and URL credentials', () => {
   for (const url of ['ws://public.example/ws', 'wss://user:password@example.test/ws', 'wss://example.test/ws?token=bad'])
@@ -31,15 +39,16 @@ test('launch grants are short-lived, audience-scoped and optionally room-bound',
   assert.equal(isLaunchGrant({ ...grant('classroom'), expiresAt: new Date(now + 121000).toISOString() }, 'classroom', now), false);
   assert.equal(isLaunchGrant({ ...grant('classroom'), audience: 'other' }, 'classroom', now), false);
 });
-test('one-time grant is hello-only; mutations wait for explicit server acknowledgement', async () => {
+test('one-time grant is redeemed before hello; mutations wait for explicit server acknowledgement', async () => {
   let issued = 0;
   const connection = new RealtimeConnection({ url: 'wss://example.test/ws', roomId: 'classroom',
-    WebSocketClass: FakeSocket, requestLaunch: async roomId => { issued++; return grant(roomId); } });
+    WebSocketClass: FakeSocket, fetcher: redemption,
+    requestLaunch: async roomId => { issued++; return grant(roomId); } });
   await connection.start(); const socket = FakeSocket.instances.at(-1);
   socket.dispatchEvent(new Event('open'));
-  assert.deepEqual(socket.sent[0], { type: 'hello', roomId: 'classroom', accessToken: grant('classroom').accessToken });
+  assert.deepEqual(socket.sent[0], { type: 'hello', roomId: 'classroom', resumeToken: sessionToken });
   assert.equal(await connection.request('dropClaim', { id: 'g' }), false);
-  socket.message({ type: 'authenticated', resumeToken: 'fixture-resume', expiresAt: Date.now() + 30000 });
+  socket.message({ type: 'authenticated', resumeToken: 'mr1_' + 'c'.repeat(64), expiresAt: Date.now() + 30000 });
   socket.message({ type: 'ready' });
   const promise = connection.request('dropClaim', { id: 'g' });
   const request = socket.sent.at(-1);
@@ -66,6 +75,7 @@ test('invalid grants and explicit authentication rejection fail closed without g
     url: 'wss://example.test/ws',
     roomId: 'classroom',
     WebSocketClass: FakeSocket,
+    fetcher: redemption,
     requestLaunch: async roomId => { issued++; return grant(roomId); },
   });
   await connection.start();
@@ -82,12 +92,13 @@ test('transient disconnect reconnects with the in-memory KNAS resume credential'
     url: 'wss://example.test/ws',
     roomId: 'classroom',
     WebSocketClass: FakeSocket,
+    fetcher: redemption,
     requestLaunch: async roomId => grant(roomId),
   });
   await connection.start();
   const first = FakeSocket.instances.at(-1);
   first.dispatchEvent(new Event('open'));
-  first.message({ type: 'authenticated', resumeToken: 'resume-fixture', expiresAt: Date.now() + 30000 });
+  first.message({ type: 'authenticated', resumeToken: 'mr1_' + 'd'.repeat(64), expiresAt: Date.now() + 30000 });
   first.message({ type: 'ready' });
   first.close(1006);
   await new Promise(resolve => setTimeout(resolve, 1050));
@@ -97,8 +108,33 @@ test('transient disconnect reconnects with the in-memory KNAS resume credential'
   assert.deepEqual(resumed.sent[0], {
     type: 'hello',
     roomId: 'classroom',
-    resumeToken: 'resume-fixture',
+    resumeToken: 'mr1_' + 'd'.repeat(64),
   });
+  connection.stop();
+});
+
+test('refreshed page restores the unexpired session from tab-scoped storage', async () => {
+  const saved = new Map([['moshroids.game-session.classroom', JSON.stringify({
+    token: sessionToken, expiresAt: Date.now() + 30000,
+  })]]);
+  const storage = {
+    getItem: key => saved.get(key) ?? null,
+    setItem: (key, value) => saved.set(key, value),
+    removeItem: key => saved.delete(key),
+  };
+  let launchCalls = 0;
+  const connection = new RealtimeConnection({
+    url: 'wss://example.test/ws',
+    roomId: 'classroom',
+    WebSocketClass: FakeSocket,
+    storage,
+    requestLaunch: async () => { launchCalls++; return grant('classroom'); },
+  });
+  await connection.start();
+  const socket = FakeSocket.instances.at(-1);
+  socket.dispatchEvent(new Event('open'));
+  assert.deepEqual(socket.sent[0], { type: 'hello', roomId: 'classroom', resumeToken: sessionToken });
+  assert.equal(launchCalls, 0);
   connection.stop();
 });
 

@@ -46,6 +46,7 @@ test('staging requests a one-time grant from only its authorized same-origin ope
     } });
   } });
   const adapter = createOpenerLaunchAdapter({ windowRef: harness.windowRef });
+  assert.equal(adapter.requestLaunch.hasNewLaunch, false);
   const actual = await adapter.requestLaunch('classroom');
   assert.equal(actual.accessToken, grant('classroom').accessToken);
   assert.equal(harness.sent.length, 1);
@@ -77,4 +78,24 @@ test('staging does not accept a grant from a mismatched request id', async () =>
   const adapter = createOpenerLaunchAdapter({ windowRef: harness.windowRef, timeoutMs: 5 });
   await assert.rejects(adapter.requestLaunch('classroom'), /did not respond/);
   assert.equal(harness.listeners.size, 0);
+});
+
+test('one-time launch fragment is removed immediately and accepted only once', async () => {
+  const accessToken = grant('classroom').accessToken;
+  const expiresAt = new Date(Date.now() + 30000).toISOString();
+  const locationRef = {
+    pathname: '/classroom-flap-moshroids/knas-staging/',
+    search: '?mode=classic',
+    hash: `#t=${accessToken}&roomId=classroom&expiresAt=${encodeURIComponent(expiresAt)}`,
+  };
+  const replacements = [];
+  const adapter = createOpenerLaunchAdapter({
+    windowRef: { opener: null },
+    locationRef,
+    historyRef: { replaceState: (...args) => replacements.push(args) },
+  });
+  assert.deepEqual(replacements, [[null, '', `${locationRef.pathname}${locationRef.search}`]]);
+  assert.equal(adapter.requestLaunch.hasNewLaunch, true);
+  assert.equal((await adapter.requestLaunch('classroom')).accessToken, accessToken);
+  await assert.rejects(adapter.requestLaunch('classroom'), /authorized LLP launch/);
 });

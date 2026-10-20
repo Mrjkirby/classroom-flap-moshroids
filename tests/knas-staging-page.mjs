@@ -15,14 +15,17 @@ test('the isolated playable page is visibly labeled and uses the common game she
   assert.equal(modeForPath('/classroom-flap-moshroids/knas-staging/'), 'classic');
 });
 
-test('staging pins KNAS transport and obtains grants only through its opener adapter', () => {
+test('staging pins KNAS transport and accepts only its secure launch adapter', () => {
   assert.match(bootstrap, /provider: 'knas'/);
   assert.match(bootstrap, /wss:\/\/moshroids-staging\.mrjkirby\.workers\.dev\/ws/);
   assert.match(bootstrap, /createOpenerLaunchAdapter/);
-  assert.doesNotMatch(bootstrap, /location\.search|URLSearchParams|localStorage/);
+  assert.doesNotMatch(bootstrap, /location\.search|localStorage/);
+  assert.match(launchAdapter, /new URLSearchParams\(locationRef\.hash/);
+  assert.match(launchAdapter, /historyRef\?\.replaceState/);
   assert.match(launchAdapter, /event\.source !== opener/);
   assert.match(launchAdapter, /event\.origin !== launcherOrigin/);
   assert.match(launchAdapter, /targetOrigin|launcherOrigin/);
   assert.doesNotMatch(launchAdapter, /console\.(log|warn|error)/);
   assert.doesNotMatch(bootstrap, /firebase/i);
+  assert.match(html, /token is removed before connecting/);
 });
