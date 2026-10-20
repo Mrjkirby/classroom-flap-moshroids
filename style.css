@@ -101,10 +101,6 @@ body {
   gap:10px;
 }
 
-#pilotLoginForm[hidden] {
-  display:none;
-}
-
 #pilotNameInput {
   width:100%;
   padding:13px 14px;
