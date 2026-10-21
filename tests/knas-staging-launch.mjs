@@ -89,13 +89,22 @@ test('one-time launch fragment is removed immediately and accepted only once', a
     hash: `#t=${accessToken}&roomId=classroom&expiresAt=${encodeURIComponent(expiresAt)}`,
   };
   const replacements = [];
+  const diagnostics = [];
   const adapter = createOpenerLaunchAdapter({
     windowRef: { opener: null },
     locationRef,
     historyRef: { replaceState: (...args) => replacements.push(args) },
+    diagnostic: (event, details) => diagnostics.push({ event, details }),
   });
   assert.deepEqual(replacements, [[null, '', `${locationRef.pathname}${locationRef.search}`]]);
   assert.equal(adapter.requestLaunch.hasNewLaunch, true);
   assert.equal((await adapter.requestLaunch('classroom')).accessToken, accessToken);
   await assert.rejects(adapter.requestLaunch('classroom'), /authorized LLP launch/);
+  assert.deepEqual(diagnostics[0].details, {
+    fragmentGrantPresent: true,
+    fragmentGrantAccepted: true,
+    authorizedOpenerPresent: false,
+    fallbackInvoked: false,
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostics), /ml1_|mr1_/);
 });

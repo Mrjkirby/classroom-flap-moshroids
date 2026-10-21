@@ -2,6 +2,7 @@ import { RealtimeConnection } from './connection.js';
 import { transportConfig } from './config.js';
 import { ROOM_ID } from '../gameMode.js';
 import { sharedClock } from '../sharedClock.js';
+import { reportTransportDiagnostic } from './diagnostics.js';
 
 export const store = { players: new Map(), destroyed: new Map(), drops: new Map(), boss: null, identity: null, connected: false };
 const listeners = new Set();
@@ -21,6 +22,9 @@ export function connect() {
         store.players = new Map(value.players.map(player => [player.id, player]));
         const own = store.players.get(value.studentId);
         store.identity = { uid: value.studentId, name: own?.name || 'PILOT' };
+        reportTransportDiagnostic('authenticated_identity', {
+          resolved: typeof value.studentId === 'string' && value.studentId.length > 0,
+        });
       }
       if (value.type === 'playerState' || value.type === 'playerJoined')
         store.players.set(value.player.id, { ...store.players.get(value.player.id), ...value.player });

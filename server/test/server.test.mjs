@@ -146,7 +146,9 @@ test('launch redemption rejects malformed tokens, identity fields, and wrong ori
 
 test('launch redemption creates a separate single-use reconnect session', async () => {
   let consumed = 0;
+  const diagnostics = [];
   const { app, url } = await start({
+    log: (event, detail) => diagnostics.push({ event, detail }),
     authenticate: async ({ accessToken }) => {
       if (accessToken !== launchToken('one-use') || consumed++) throw new Error('invalid or consumed');
       return { studentId: 'canonical-id', displayName: 'Canonical Pilot' };
@@ -171,6 +173,13 @@ test('launch redemption creates a separate single-use reconnect session', async 
     const player = await connect(url, sessionToken);
     assert.equal((await player.wait('welcome')).studentId, 'canonical-id');
     player.socket.close();
+    assert.ok(diagnostics.some(({ event, detail }) =>
+      event === 'launch_redeem' && detail.stage === 'identity' && detail.outcome === 'resolved'));
+    assert.ok(diagnostics.some(({ event, detail }) =>
+      event === 'launch_redeem' && detail.stage === 'session' && detail.outcome === 'created'));
+    assert.ok(diagnostics.some(({ event, detail }) =>
+      event === 'websocket_auth' && detail.stage === 'identity' && detail.outcome === 'resolved'));
+    assert.doesNotMatch(JSON.stringify(diagnostics), /ml1_|mr1_|canonical-id|Race Pilot/);
   } finally { await app.close(); }
 });
 

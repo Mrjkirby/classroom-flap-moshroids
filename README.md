@@ -74,6 +74,13 @@ override the endpoint from a URL. It displays **MOSHROIDS — KNAS STAGING** and
 does not load Firebase SDK modules. Production entry pages keep the Firebase
 default.
 
+The root URL `/` is still the legacy Firebase production entry and displays its
+pilot-name form. It is not a KNAS launch destination. The LLP game-launch action
+must open `/knas-staging/` and provide a fresh grant by the supported fragment
+or trusted opener handoff. If a test lands on `/` and shows the pilot-name form,
+the KNAS client was not loaded; this is a launch-routing failure, not a KNAS
+authentication result. The staging client itself never falls back to Firebase.
+
 The existing authenticated Snake/LLP launcher must issue every launch token.
 It may open the page using a one-time URL fragment:
 
@@ -88,6 +95,10 @@ page also supports the existing exact-origin opener handoff from
 a fresh `ml1_` token, audience `moshroids`, a permitted room and an expiry no
 more than two minutes away. The launcher must never include identity or service
 secrets.
+
+The staging browser and private KNAS service emit diagnostic stage/outcome
+events, HTTP status codes and WebSocket close codes only. They do not log launch
+grants, session credentials, PINs, student identifiers or display names.
 
 KNAS verifies and atomically consumes each grant through the existing LLP
 service. It derives identity there, creates a separate reconnectable game

@@ -1,3 +1,5 @@
+import { reportTransportDiagnostic } from './diagnostics.js';
+
 export function isLaunchGrant(grant, roomId, now = Date.now()) {
   if (!grant || typeof grant !== 'object' || grant.ok === false ||
       grant.audience !== 'moshroids' || typeof grant.accessToken !== 'string' ||
@@ -12,12 +14,12 @@ export function isLaunchGrant(grant, roomId, now = Date.now()) {
 export class RealtimeConnection {
   constructor({ url, roomId, requestLaunch, WebSocketClass = globalThis.WebSocket,
     fetcher = globalThis.fetch, storage = globalThis.sessionStorage,
-    onMessage = () => {}, onStatus = () => {} }) {
+    onMessage = () => {}, onStatus = () => {}, diagnostic = reportTransportDiagnostic }) {
     const parsed = new URL(url);
     if (parsed.username || parsed.password || parsed.search || parsed.hash ||
         !(parsed.protocol === 'wss:' || (parsed.protocol === 'ws:' && ['127.0.0.1', 'localhost'].includes(parsed.hostname))))
       throw new Error('A secure credential-free WSS endpoint is required.');
-    Object.assign(this, { url, roomId, requestLaunch, WebSocketClass, fetcher, storage, onMessage, onStatus });
+    Object.assign(this, { url, roomId, requestLaunch, WebSocketClass, fetcher, storage, onMessage, onStatus, diagnostic });
     this.sessionKey = `moshroids.game-session.${roomId}`;
     this.pending = new Map(); this.sequence = 0; this.stopped = true;
   }
@@ -53,22 +55,39 @@ export class RealtimeConnection {
     endpoint.pathname = '/api/launch/redeem';
     endpoint.search = '';
     endpoint.hash = '';
-    const response = await this.fetcher(endpoint, {
-      method: 'POST',
-      mode: 'cors',
-      credentials: 'omit',
-      cache: 'no-store',
-      redirect: 'error',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: grant.accessToken, roomId: this.roomId }),
-    });
-    const result = await response.json();
-    if (!response.ok || result?.ok !== true ||
-        typeof result.sessionToken !== 'string' || !/^mr1_[a-f0-9]{64}$/.test(result.sessionToken) ||
-        !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now() ||
-        result.expiresAt > Date.now() + 5 * 60_000) {
+    this.diagnostic('launch_exchange', { stage: 'attempted', grantPresent: true });
+    let response;
+    try {
+      response = await this.fetcher(endpoint, {
+        method: 'POST',
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'no-store',
+        redirect: 'error',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: grant.accessToken, roomId: this.roomId }),
+      });
+    } catch {
+      this.diagnostic('launch_exchange', { stage: 'network_error', grantPresent: true });
+      throw new Error('Launch redemption is unavailable.');
+    }
+    this.diagnostic('launch_exchange', { stage: 'response', httpStatus: response.status });
+    let result;
+    try {
+      result = await response.json();
+    } catch {
+      this.diagnostic('launch_exchange', { stage: 'invalid_response', httpStatus: response.status });
       throw new Error('Launch token redemption failed.');
     }
+    const accepted = response.ok && result?.ok === true &&
+        typeof result.sessionToken === 'string' && /^mr1_[a-f0-9]{64}$/.test(result.sessionToken) &&
+        Number.isFinite(result.expiresAt) && result.expiresAt > Date.now() &&
+        result.expiresAt <= Date.now() + 5 * 60_000;
+    if (!accepted) {
+      this.diagnostic('launch_exchange', { stage: 'rejected', httpStatus: response.status });
+      throw new Error('Launch token redemption failed.');
+    }
+    this.diagnostic('launch_exchange', { stage: 'accepted', httpStatus: response.status });
     this.resumeToken = result.sessionToken;
     this.expiresAt = result.expiresAt;
     this.saveSession(this.resumeToken, this.expiresAt);
@@ -87,12 +106,22 @@ export class RealtimeConnection {
         await this.redeem(grant);
       }
     } catch {
+      this.diagnostic('launch_flow', { stage: 'failed', fallbackInvoked: false });
       this.onStatus(false, 'Classroom launch unavailable. Reopen from your existing classroom session.');
       return; // Fail closed; never fall back to anonymous Firebase identity.
     }
     if (this.stopped) return;
-    const socket = this.socket = new this.WebSocketClass(this.url);
+    this.diagnostic('websocket', { stage: 'attempted', fallbackInvoked: false });
+    let socket;
+    try {
+      socket = this.socket = new this.WebSocketClass(this.url);
+    } catch {
+      this.diagnostic('websocket', { stage: 'construction_error', fallbackInvoked: false });
+      this.onStatus(false, 'Connection unavailable');
+      return;
+    }
     socket.addEventListener('open', () => {
+      this.diagnostic('websocket', { stage: 'open', fallbackInvoked: false });
       socket.send(JSON.stringify({ type: 'hello', roomId: this.roomId, resumeToken: this.resumeToken }));
     });
     socket.addEventListener('message', event => {
@@ -122,6 +151,11 @@ export class RealtimeConnection {
       this.onMessage(value);
     });
     socket.addEventListener('close', event => {
+      this.diagnostic('websocket', {
+        stage: 'closed',
+        closeCode: event.code,
+        fallbackInvoked: false,
+      });
       this.ready = false; clearInterval(this.heartbeat);
       for (const item of this.pending.values()) { clearTimeout(item.timer); item.resolve(false); }
       this.pending.clear();
@@ -137,7 +171,10 @@ export class RealtimeConnection {
       if (this.attempts <= 5) this.retry = setTimeout(() => this.connect(), Math.min(1000 * 2 ** (this.attempts - 1), 10000));
       else this.onStatus(false, 'Connection unavailable. Reopen from your classroom session.');
     });
-    socket.addEventListener('error', () => this.onStatus(false, 'Connection unavailable'));
+    socket.addEventListener('error', () => {
+      this.diagnostic('websocket', { stage: 'error', fallbackInvoked: false });
+      this.onStatus(false, 'Connection unavailable');
+    });
   }
   send(value) {
     if (!this.ready || this.socket?.readyState !== 1 || this.socket.bufferedAmount > 65536) return false;

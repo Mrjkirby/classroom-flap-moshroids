@@ -40,9 +40,10 @@ test('launch grants are short-lived, audience-scoped and optionally room-bound',
   assert.equal(isLaunchGrant({ ...grant('classroom'), audience: 'other' }, 'classroom', now), false);
 });
 test('one-time grant is redeemed before hello; mutations wait for explicit server acknowledgement', async () => {
-  let issued = 0;
+  let issued = 0; const diagnostics = [];
   const connection = new RealtimeConnection({ url: 'wss://example.test/ws', roomId: 'classroom',
     WebSocketClass: FakeSocket, fetcher: redemption,
+    diagnostic: (event, details) => diagnostics.push({ event, details }),
     requestLaunch: async roomId => { issued++; return grant(roomId); } });
   await connection.start(); const socket = FakeSocket.instances.at(-1);
   socket.dispatchEvent(new Event('open'));
@@ -55,6 +56,11 @@ test('one-time grant is redeemed before hello; mutations wait for explicit serve
   socket.message({ type: 'result', requestId: request.requestId, ok: true });
   assert.equal(await promise, true); assert.equal(issued, 1);
   assert.ok(!JSON.stringify(request).includes('ml1_'));
+  assert.deepEqual(diagnostics.filter(item => item.event === 'launch_exchange').map(item => item.details.stage),
+    ['attempted', 'response', 'accepted']);
+  assert.deepEqual(diagnostics.filter(item => item.event === 'websocket').map(item => item.details.stage),
+    ['attempted', 'open']);
+  assert.doesNotMatch(JSON.stringify(diagnostics), /ml1_|mr1_/);
   const interrupted = connection.request('asteroidClaim', { id: 'a' });
   connection.stop(); assert.equal(await interrupted, false);
 });

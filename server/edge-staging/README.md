@@ -209,3 +209,34 @@ not NAS or classroom capacity evidence. A real authorized one-time launch,
 replay/refresh/reconnect, and 26 distinct authorized learners remain untested.
 Keep `classroomReady:false` and Firebase as the production default until those
 gates pass.
+
+### Positive TEST launch failure — 2026-10-20
+
+The reported browser landed at the site root `/`, where the published
+`index.html` intentionally loads the Firebase-default game and pilot-name form.
+Only `/knas-staging/` loads the KNAS client; the root page does not parse KNAS
+grants or attempt KNAS redemption. Thus this observation fails before the
+staging client/Worker/KNAS boundary and is not evidence of a KNAS grant
+rejection. No matching KNAS auth-container log events were found in the
+45-minute log window; the deployed earlier version did not log redemption
+attempts, so that absence alone cannot establish whether an edge request
+occurred.
+
+The canonical local Snake source was located in the separate Spelling Snake
+repository. Its issuer route is live (an unauthenticated POST correctly returns
+401), but its previous UI had no MOSHROIDS launch action. A local change now
+adds a button only to authenticated Snake setup/defeated screens; it requests
+the same-origin one-time grant and opens this exact staging path with a fragment.
+The Snake source remote currently rejects repository access, so this change is
+not published. The authorized browser session is also unavailable here.
+Staging-browser and private-server diagnostics record only grant-present
+booleans, status categories, WebSocket close codes and identity-resolved
+booleans; they exclude grants, session credentials and student identifiers.
+Worker observability remains disabled.
+
+No positive grant exchange, authenticated gameplay, replay test or refresh test
+has passed from this reported launch. The supplied attempt hit `/`, not
+`/knas-staging/`, so it never exercised the KNAS grant flow. The new Snake
+button is a local repair only until deployed. Do not change `classroomReady`,
+production transport or begin the 26-client test until it is published and the
+single real TEST-account flow passes.

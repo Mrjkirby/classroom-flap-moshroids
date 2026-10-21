@@ -1,4 +1,5 @@
 import { isLaunchGrant } from '../src/transport/connection.js';
+import { reportTransportDiagnostic } from '../src/transport/diagnostics.js';
 
 export const LLP_LAUNCHER_ORIGIN =
   'https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site';
@@ -12,10 +13,13 @@ export function createOpenerLaunchAdapter({
   historyRef = globalThis.history,
   launcherOrigin = LLP_LAUNCHER_ORIGIN,
   timeoutMs = RESPONSE_TIMEOUT_MS,
+  diagnostic = reportTransportDiagnostic,
 } = {}) {
   let directGrant = null;
+  let fragmentGrantPresent = false;
   if (locationRef?.hash) {
     const params = new URLSearchParams(locationRef.hash.slice(1));
+    fragmentGrantPresent = params.has('t');
     if (params.has('t')) {
       const allowed = new Set(['t', 'roomId', 'expiresAt']);
       const entries = [...params.keys()];
@@ -34,22 +38,37 @@ export function createOpenerLaunchAdapter({
       historyRef?.replaceState(null, '', `${locationRef.pathname}${locationRef.search}`);
     }
   }
+  diagnostic('launch_context', {
+    fragmentGrantPresent,
+    fragmentGrantAccepted: Boolean(directGrant),
+    authorizedOpenerPresent: Boolean(windowRef?.opener),
+    fallbackInvoked: false,
+  });
 
   const requestLaunch = roomId => {
     if (directGrant) {
       const grant = directGrant;
       directGrant = null;
       if (!ALLOWED_ROOMS.has(roomId) || !isLaunchGrant(grant, roomId)) {
+        diagnostic('launch_grant', { source: 'fragment', present: true, accepted: false });
         return Promise.reject(new Error('The launch link is invalid or expired.'));
       }
+      diagnostic('launch_grant', { source: 'fragment', present: true, accepted: true });
       return Promise.resolve(grant);
     }
     if (!ALLOWED_ROOMS.has(roomId) || !windowRef?.opener) {
+      diagnostic('launch_request', {
+        source: 'opener',
+        outcome: 'unavailable',
+        grantPresent: false,
+        fallbackInvoked: false,
+      });
       return Promise.reject(new Error('An authorized LLP launch is required.'));
     }
 
     const opener = windowRef.opener;
     const requestId = crypto.randomUUID();
+    diagnostic('launch_request', { source: 'opener', outcome: 'sent', grantPresent: false });
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
@@ -63,13 +82,16 @@ export function createOpenerLaunchAdapter({
         cleanup();
         if (message.type === 'moshroids:launch-error' ||
             !isLaunchGrant(message.grant, roomId)) {
+          diagnostic('launch_grant', { source: 'opener', present: Boolean(message.grant), accepted: false });
           reject(new Error('The authorized LLP launch did not provide a valid grant.'));
           return;
         }
+        diagnostic('launch_grant', { source: 'opener', present: true, accepted: true });
         resolve(message.grant);
       };
       const timer = setTimeout(() => {
         cleanup();
+        diagnostic('launch_request', { source: 'opener', outcome: 'timeout', grantPresent: false });
         reject(new Error('The authorized LLP launch did not respond.'));
       }, timeoutMs);
       windowRef.addEventListener('message', receive);
@@ -81,6 +103,7 @@ export function createOpenerLaunchAdapter({
         }, launcherOrigin);
       } catch (error) {
         cleanup();
+        diagnostic('launch_request', { source: 'opener', outcome: 'send_failed', grantPresent: false });
         reject(error);
       }
     });

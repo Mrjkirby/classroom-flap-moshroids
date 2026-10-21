@@ -51,8 +51,12 @@ export function createMoshroidsServer({
     if (request.url === '/api/launch/redeem') {
       const origin = request.headers.origin;
       const originAllowed = origin ? allowed.has(origin) : allowMissingOrigin;
-      if (!originAllowed) return json(response, 403, { ok: false });
+      if (!originAllowed) {
+        log('launch_redeem', { stage: 'origin', outcome: 'rejected', status: 403 });
+        return json(response, 403, { ok: false });
+      }
       if (request.method === 'OPTIONS') {
+        log('launch_redeem', { stage: 'cors_preflight', outcome: 'accepted', status: 204 });
         response.writeHead(204, {
           'access-control-allow-origin': origin || '',
           'access-control-allow-methods': 'POST',
@@ -63,9 +67,16 @@ export function createMoshroidsServer({
         });
         return response.end();
       }
-      if (request.method !== 'POST') return json(response, 405, { ok: false }, origin);
-      if (!ready) return json(response, 503, { ok: false }, origin);
+      if (request.method !== 'POST') {
+        log('launch_redeem', { stage: 'method', outcome: 'rejected', status: 405 });
+        return json(response, 405, { ok: false }, origin);
+      }
+      if (!ready) {
+        log('launch_redeem', { stage: 'service', outcome: 'not_ready', status: 503 });
+        return json(response, 503, { ok: false }, origin);
+      }
       if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) {
+        log('launch_redeem', { stage: 'content_type', outcome: 'rejected', status: 415 });
         return json(response, 415, { ok: false }, origin);
       }
       void (async () => {
@@ -73,17 +84,39 @@ export function createMoshroidsServer({
           const body = await readJson(request);
           if (!body || Object.keys(body).sort().join() !== 'roomId,token' ||
             typeof body.token !== 'string' || !/^ml1_[a-f0-9]{64}$/.test(body.token) ||
-            !roomMode(body.roomId)) return json(response, 400, { ok: false }, origin);
+            !roomMode(body.roomId)) {
+            log('launch_redeem', {
+              stage: 'request_validation',
+              outcome: 'rejected',
+              grantPresent: typeof body?.token === 'string',
+              status: 400,
+            });
+            return json(response, 400, { ok: false }, origin);
+          }
+          log('launch_redeem', { stage: 'issuer', outcome: 'attempted', grantPresent: true });
           const identity = await authenticate({ accessToken: body.token, roomId: body.roomId, origin });
-          if (!identity?.studentId || !identity?.displayName) return json(response, 401, { ok: false }, origin);
+          if (!identity?.studentId || !identity?.displayName) {
+            log('launch_redeem', { stage: 'identity', outcome: 'unresolved', status: 401 });
+            return json(response, 401, { ok: false }, origin);
+          }
+          log('launch_redeem', { stage: 'identity', outcome: 'resolved' });
           const session = sessions.create(identity, body.roomId, origin);
+          log('launch_redeem', { stage: 'session', outcome: 'created', status: 200 });
           return json(response, 200, { ok: true, sessionToken: session.resumeToken, expiresAt: session.expiresAt }, origin);
         } catch (error) {
-          if (error?.message === 'Request body too large.') return json(response, 413, { ok: false }, origin);
-          if (error instanceof SyntaxError) return json(response, 400, { ok: false }, origin);
+          if (error?.message === 'Request body too large.') {
+            log('launch_redeem', { stage: 'request_body', outcome: 'too_large', status: 413 });
+            return json(response, 413, { ok: false }, origin);
+          }
+          if (error instanceof SyntaxError) {
+            log('launch_redeem', { stage: 'request_body', outcome: 'invalid_json', status: 400 });
+            return json(response, 400, { ok: false }, origin);
+          }
           if (error?.message === 'MOSHROIDS identity service is unavailable.') {
+            log('launch_redeem', { stage: 'issuer', outcome: 'unavailable', status: 503 });
             return json(response, 503, { ok: false }, origin);
           }
+          log('launch_redeem', { stage: 'issuer', outcome: 'rejected', status: 401 });
           return json(response, 401, { ok: false }, origin);
         }
       })();
@@ -98,8 +131,15 @@ export function createMoshroidsServer({
   });
   server.on('upgrade', (request, socket, head) => {
     const origin = request.headers.origin;
-    if (request.url !== '/ws') return reject(socket, 404, 'Not Found');
-    if ((origin && !allowed.has(origin)) || (!origin && !allowMissingOrigin)) return reject(socket, 403, 'Forbidden');
+    if (request.url !== '/ws') {
+      log('websocket_auth', { stage: 'upgrade', outcome: 'rejected', status: 404 });
+      return reject(socket, 404, 'Not Found');
+    }
+    if ((origin && !allowed.has(origin)) || (!origin && !allowMissingOrigin)) {
+      log('websocket_auth', { stage: 'origin', outcome: 'rejected', status: 403 });
+      return reject(socket, 403, 'Forbidden');
+    }
+    log('websocket_auth', { stage: 'upgrade', outcome: 'accepted' });
     let session = null;
     let match = null;
     let connection = null;
@@ -123,9 +163,11 @@ export function createMoshroidsServer({
           if (message.type !== 'hello' || !roomMode(message.roomId) ||
             Object.keys(message).some(key => !allowedFields.includes(key)) ||
             typeof message.resumeToken !== 'string') {
+            log('websocket_auth', { stage: 'hello', outcome: 'rejected', status: 4003 });
             return connection.close(4003, 'Authenticate before joining.');
           }
           authenticating = true;
+          log('websocket_auth', { stage: 'resume', outcome: 'attempted' });
           try {
             const gameSession = sessions.resume(message.resumeToken, message.roomId, origin);
             const identity = gameSession.identity;
@@ -140,8 +182,9 @@ export function createMoshroidsServer({
             connection.send({ type: 'authenticated', resumeToken: gameSession.resumeToken,
               expiresAt, testerAuthorized: session.testerAuthorized });
             match.join(session, connection);
-            log('joined', { roomId: message.roomId, studentId });
+            log('websocket_auth', { stage: 'identity', outcome: 'resolved', roomId: message.roomId });
           } catch {
+            log('websocket_auth', { stage: 'resume', outcome: 'rejected', status: 4003 });
             connection.close(4003, 'Authentication failed.');
           }
           return;
@@ -154,7 +197,10 @@ export function createMoshroidsServer({
         clearTimeout(helloTimer);
         clearTimeout(expiryTimer);
         connections.delete(connection);
-        if (session && match) { match.leave(session.studentId, connection); log('left', { roomId: match.roomId, studentId: session.studentId }); }
+        if (session && match) {
+          match.leave(session.studentId, connection);
+          log('websocket_auth', { stage: 'left', outcome: 'closed', roomId: match.roomId });
+        }
       },
     });
     connections.add(connection);
