@@ -41,6 +41,11 @@ live LLP tester-permission check rather than abandoning it after four seconds.
 There is no automatic consume retry. The existing 60-second grant expiry is
 still checked after the issuer responds, and expired/replayed grants fail closed.
 
+The October 22 launch-timeout repair image is
+`sha256:b5b599fda02a04d94c07dd66eefae3e790d5966fff72a9ac582283519b6316f0`
+(source `d75aded`). It changes only the server verifier; the standby image,
+public Firebase configuration, private service secret and network are unchanged.
+
 ## Release verification (2026-10-12)
 
 - Snake version 29 deployed successfully with runtime environment revision 2.
