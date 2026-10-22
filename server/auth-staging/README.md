@@ -36,6 +36,11 @@ removes the one-time launch fragment immediately, and refresh/reconnect uses a
 rotating tab-scoped session credential. Never create synthetic live learners or
 reuse student cookies.
 
+Issuer redemption has a bounded 45-second network/body deadline, allowing a
+live LLP tester-permission check rather than abandoning it after four seconds.
+There is no automatic consume retry. The existing 60-second grant expiry is
+still checked after the issuer responds, and expired/replayed grants fail closed.
+
 ## Release verification (2026-10-12)
 
 - Snake version 29 deployed successfully with runtime environment revision 2.

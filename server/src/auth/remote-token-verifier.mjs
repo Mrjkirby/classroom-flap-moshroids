@@ -1,5 +1,9 @@
 import { roomMode } from '../protocol.mjs';
 
+// The issuer may recheck LLP tester permission before its atomic consume.
+// Leave headroom within the existing 60-second grant lifetime; never retry a consume.
+const VERIFY_TIMEOUT_MS = 45_000;
+
 // The classroom D1 DELETE/RETURNING, not process-local memory, owns replay protection.
 export function createRemoteTokenVerifier({ endpoint, serviceSecret,
   fetcher = globalThis.fetch, clock = () => Date.now() } = {}) {
@@ -14,15 +18,24 @@ export function createRemoteTokenVerifier({ endpoint, serviceSecret,
     }
     let response, body;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4_000);
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error('Verification timeout'));
+      }, VERIFY_TIMEOUT_MS);
+    });
     try {
-      response = await fetcher(url, {
-        method: 'POST', redirect: 'error', signal: controller.signal,
-        headers: { 'content-type': 'application/json', accept: 'application/json',
-          authorization: 'Bearer ' + serviceSecret },
-        body: JSON.stringify({ action: 'moshroidsVerifySession', accessToken, audience: 'moshroids', roomId }),
-      });
-      body = await response.json();
+      const result = await Promise.race([deadline, (async () => {
+        const response = await fetcher(url, {
+          method: 'POST', redirect: 'error', signal: controller.signal,
+          headers: { 'content-type': 'application/json', accept: 'application/json',
+            authorization: 'Bearer ' + serviceSecret },
+          body: JSON.stringify({ action: 'moshroidsVerifySession', accessToken, audience: 'moshroids', roomId }),
+        });
+        return { response, body: await response.json() };
+      })()]);
+      ({ response, body } = result);
     } catch {
       throw new Error('MOSHROIDS identity service is unavailable.');
     } finally { clearTimeout(timer); }

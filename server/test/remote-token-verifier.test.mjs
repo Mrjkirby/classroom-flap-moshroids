@@ -61,3 +61,34 @@ test('network and response failures fail closed without retrying', async () => {
     await assert.rejects(() => verify({ accessToken, roomId: 'classroom' }), /unavailable/);
   }
 });
+
+test('slow issuer verification succeeds after 40 seconds without repeating consume', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0, signal;
+  const verify = createRemoteTokenVerifier({ ...options, fetcher: async (_url, request) => {
+    calls++; signal = request.signal;
+    await new Promise(resolve => setTimeout(resolve, 40_000));
+    return Response.json(body());
+  } });
+  const pending = verify({ accessToken, roomId: 'classroom' });
+  t.mock.timers.tick(40_000);
+  assert.equal(signal.aborted, false);
+  assert.equal((await pending).studentId, 'learner-1');
+  assert.equal(calls, 1);
+});
+
+test('stalled fetch or body fails closed at 45 seconds even if it ignores abort', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const bodyStall of [false, true]) {
+    let calls = 0, signal;
+    const verify = createRemoteTokenVerifier({ ...options, fetcher: async (_url, request) => {
+      calls++; signal = request.signal;
+      return bodyStall ? { json: () => new Promise(() => {}) } : new Promise(() => {});
+    } });
+    const failure = assert.rejects(verify({ accessToken, roomId: 'classroom' }), /unavailable/);
+    t.mock.timers.tick(45_000);
+    await failure;
+    assert.equal(signal.aborted, true);
+    assert.equal(calls, 1);
+  }
+});
