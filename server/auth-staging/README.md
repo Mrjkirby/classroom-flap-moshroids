@@ -47,10 +47,13 @@ is an additive response field, not a longer session or a different authority.
 The server still closes/rejects expired sessions at the original five-minute
 deadline. Deploy this server change before the corresponding Pages client.
 
-The October 22 launch-timeout repair image is
+The October 23 server-clock repair image is
+`sha256:93b9f727cf583f78025b7d8d63075d0b719e1cf22260b1794ce4e6282ac0e479`
+(source `f617424`). It adds authoritative timestamps to session responses;
+the standby image, public Firebase configuration, private service secret,
+network and session lifetime are unchanged. The previous timeout-repair image
 `sha256:b5b599fda02a04d94c07dd66eefae3e790d5966fff72a9ac582283519b6316f0`
-(source `d75aded`). It changes only the server verifier; the standby image,
-public Firebase configuration, private service secret and network are unchanged.
+is retained, but an image rollback must also restore the matching Pages client.
 
 ## Release verification (2026-10-12)
 

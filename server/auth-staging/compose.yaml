@@ -1,7 +1,7 @@
 services:
   moshroids-auth-staging:
     # Existing verified KNAS image; no rebuild or retag of the standby service.
-    image: sha256:b5b599fda02a04d94c07dd66eefae3e790d5966fff72a9ac582283519b6316f0
+    image: sha256:93b9f727cf583f78025b7d8d63075d0b719e1cf22260b1794ce4e6282ac0e479
     container_name: moshroids-auth-staging
     restart: unless-stopped
     env_file:
