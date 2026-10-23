@@ -41,6 +41,12 @@ live LLP tester-permission check rather than abandoning it after four seconds.
 There is no automatic consume retry. The existing 60-second grant expiry is
 still checked after the issuer responds, and expired/replayed grants fail closed.
 
+Redemption and the authenticated WebSocket message now include `serverNow` so
+the browser can compare the session expiry with the authoritative clock. This
+is an additive response field, not a longer session or a different authority.
+The server still closes/rejects expired sessions at the original five-minute
+deadline. Deploy this server change before the corresponding Pages client.
+
 The October 22 launch-timeout repair image is
 `sha256:b5b599fda02a04d94c07dd66eefae3e790d5966fff72a9ac582283519b6316f0`
 (source `d75aded`). It changes only the server verifier; the standby image,

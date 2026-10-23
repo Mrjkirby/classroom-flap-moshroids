@@ -102,7 +102,8 @@ export function createMoshroidsServer({
           log('launch_redeem', { stage: 'identity', outcome: 'resolved' });
           const session = sessions.create(identity, body.roomId, origin);
           log('launch_redeem', { stage: 'session', outcome: 'created', status: 200 });
-          return json(response, 200, { ok: true, sessionToken: session.resumeToken, expiresAt: session.expiresAt }, origin);
+          return json(response, 200, { ok: true, sessionToken: session.resumeToken,
+            expiresAt: session.expiresAt, serverNow: clock() }, origin);
         } catch (error) {
           if (error?.message === 'Request body too large.') {
             log('launch_redeem', { stage: 'request_body', outcome: 'too_large', status: 413 });
@@ -180,7 +181,7 @@ export function createMoshroidsServer({
             match = registry.get(message.roomId);
             clearTimeout(helloTimer);
             connection.send({ type: 'authenticated', resumeToken: gameSession.resumeToken,
-              expiresAt, testerAuthorized: session.testerAuthorized });
+              expiresAt, serverNow: clock(), testerAuthorized: session.testerAuthorized });
             match.join(session, connection);
             log('websocket_auth', { stage: 'identity', outcome: 'resolved', roomId: message.roomId });
           } catch {

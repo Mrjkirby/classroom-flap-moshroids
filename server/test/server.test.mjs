@@ -165,12 +165,18 @@ test('launch redemption creates a separate single-use reconnect session', async 
     });
     const first = await redeem();
     assert.equal(first.status, 200);
-    const { sessionToken, expiresAt } = await first.json();
+    const { sessionToken, expiresAt, serverNow } = await first.json();
     assert.match(sessionToken, /^mr1_[a-f0-9]{64}$/);
     assert.ok(expiresAt > Date.now());
+    assert.ok(Number.isFinite(serverNow));
+    assert.ok(expiresAt > serverNow && expiresAt - serverNow <= 300_000);
     assert.equal((await redeem()).status, 401);
 
     const player = await connect(url, sessionToken);
+    const authenticated = await player.wait('authenticated');
+    assert.equal(authenticated.expiresAt, expiresAt, 'reconnect must not extend the server lifetime');
+    assert.ok(authenticated.expiresAt > authenticated.serverNow);
+    assert.ok(authenticated.expiresAt - authenticated.serverNow <= 300_000);
     assert.equal((await player.wait('welcome')).studentId, 'canonical-id');
     player.socket.close();
     assert.ok(diagnostics.some(({ event, detail }) =>

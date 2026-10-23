@@ -1,5 +1,12 @@
 import { reportTransportDiagnostic } from './diagnostics.js';
 
+// Compare server timestamps only. A school computer's wall clock is not an
+// authentication authority, and even small skew can reject a valid session.
+function validSessionLifetime(expiresAt, serverNow) {
+  return Number.isFinite(serverNow) && Number.isFinite(expiresAt) &&
+    expiresAt > serverNow && expiresAt - serverNow <= 5 * 60_000;
+}
+
 export function isLaunchGrant(grant, roomId, now = Date.now()) {
   if (!grant || typeof grant !== 'object' || grant.ok === false ||
       grant.audience !== 'moshroids' || typeof grant.accessToken !== 'string' ||
@@ -29,7 +36,9 @@ export class RealtimeConnection {
     try {
       const saved = JSON.parse(this.storage.getItem(this.sessionKey));
       if (typeof saved?.token === 'string' && /^mr1_[a-f0-9]{64}$/.test(saved.token) &&
-          Number.isFinite(saved.expiresAt) && saved.expiresAt > Date.now()) {
+          Number.isFinite(saved.expiresAt) && saved.expiresAt > 0) {
+        // This is only a reconnect candidate. The server checks absolute expiry,
+        // Origin, room and rotation before allowing it to join any game state.
         this.resumeToken = saved.token;
         this.expiresAt = saved.expiresAt;
       } else this.storage.removeItem(this.sessionKey);
@@ -82,8 +91,7 @@ export class RealtimeConnection {
     }
     const accepted = response.ok && result?.ok === true &&
         typeof result.sessionToken === 'string' && /^mr1_[a-f0-9]{64}$/.test(result.sessionToken) &&
-        Number.isFinite(result.expiresAt) && result.expiresAt > Date.now() &&
-        result.expiresAt <= Date.now() + 5 * 60_000;
+        validSessionLifetime(result.expiresAt, result.serverNow);
     if (!accepted) {
       this.diagnostic('launch_exchange', { stage: 'rejected', httpStatus: response.status });
       throw new Error('Launch token redemption failed.');
@@ -99,7 +107,7 @@ export class RealtimeConnection {
     this.onStatus(false, 'Connecting…');
     try {
       this.loadSession();
-      if (!this.resumeToken || Date.now() >= this.expiresAt) {
+      if (!this.resumeToken) {
         this.clearSession();
         if (typeof this.requestLaunch !== 'function') throw new Error('Classroom launch is not configured.');
         const grant = await this.requestLaunch(this.roomId);
@@ -130,7 +138,7 @@ export class RealtimeConnection {
       try { value = JSON.parse(event.data); } catch { socket.close(); return; }
       if (value.type === 'authenticated') {
         if (typeof value.resumeToken !== 'string' || !/^mr1_[a-f0-9]{64}$/.test(value.resumeToken) ||
-            !Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) {
+            !validSessionLifetime(value.expiresAt, value.serverNow)) {
           this.clearSession();
           socket.close();
           return;

@@ -68,6 +68,15 @@ The browser fetch adapter preserves the Window receiver. Passing native `fetch`
 as a connection method causes an illegal invocation before redemption reaches
 KNAS; `tests/transport-connection.mjs` covers this browser-specific regression.
 
+Game-session responses include `serverNow`. The browser validates the five-minute
+lifetime against that server timestamp, not the school computer's wall clock.
+Previously even a two-second slow clock could reject a successful HTTP 200
+redemption before opening WSS. Restored credentials are only reconnect candidates:
+KNAS still enforces absolute expiry, room, Origin and one-use rotation before
+joining. No clock adjustment can extend a session. Deploy the additive server
+response change before the matching client. Real loopback HTTP/WSS tests cover
+clock differences up to an hour, reconnect and server-enforced expiration.
+
 ### Isolated playable client
 
 [`knas-staging/`](knas-staging/) is a dedicated static shell around the common

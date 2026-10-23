@@ -24,8 +24,77 @@ const redemption = async (url, options) => {
   assert.equal(options.credentials, 'omit');
   const body = JSON.parse(options.body);
   assert.equal(body.roomId, 'classroom');
-  return Response.json({ ok: true, sessionToken, expiresAt: Date.now() + 5 * 60_000 });
+  const serverNow = Date.now();
+  return Response.json({ ok: true, sessionToken, serverNow, expiresAt: serverNow + 5 * 60_000 });
 };
+
+test('a valid server-issued session opens even when the classroom clock is two seconds behind', async t => {
+  const serverNow = Date.now();
+  t.mock.method(Date, 'now', () => serverNow - 2000);
+  const connection = new RealtimeConnection({
+    url: 'wss://example.test/ws', roomId: 'classroom',
+    WebSocketClass: FakeSocket, storage: null, diagnostic: () => {},
+    requestLaunch: async roomId => grant(roomId),
+    fetcher: async () => Response.json({
+      ok: true, sessionToken, serverNow, expiresAt: serverNow + 300_000,
+    }),
+  });
+  t.after(() => connection.stop());
+  await connection.start();
+  assert.ok(connection.socket, 'an accepted issuer response must reach the WebSocket');
+  connection.socket.message({ type: 'authenticated', resumeToken: sessionToken,
+    serverNow, expiresAt: serverNow + 300_000 });
+  assert.equal(connection.socket.readyState, 1);
+});
+
+for (const offset of [-3_600_000, 3_600_000]) {
+  test(`session response and refresh tolerate a ${offset}ms client clock offset`, async t => {
+    const serverNow = Date.now();
+    t.mock.method(Date, 'now', () => serverNow + offset);
+    const saved = new Map();
+    const storage = { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value),
+      removeItem: key => saved.delete(key) };
+    const options = { url: 'wss://example.test/ws', roomId: 'classroom',
+      WebSocketClass: FakeSocket, storage, diagnostic: () => {},
+      requestLaunch: async roomId => grant(roomId),
+      fetcher: async () => Response.json({ ok: true, sessionToken, serverNow, expiresAt: serverNow + 300_000 }) };
+    const initial = new RealtimeConnection(options);
+    t.after(() => initial.stop());
+    await initial.start();
+    assert.ok(initial.socket);
+    initial.socket.message({ type: 'authenticated', resumeToken: sessionToken,
+      serverNow, expiresAt: serverNow + 300_000 });
+    assert.equal(initial.socket.readyState, 1);
+    const restored = new RealtimeConnection({ ...options,
+      requestLaunch: async () => { throw new Error('must resume without replaying a grant'); } });
+    t.after(() => restored.stop());
+    await restored.start();
+    assert.ok(restored.socket);
+    // A stored token is not authorization: the server can still reject it.
+    restored.socket.close(4003);
+    assert.equal(restored.resumeToken, null);
+    assert.equal(restored.retry, undefined);
+  });
+}
+
+test('session expiry and lifetime are checked against the authoritative server clock', async () => {
+  const serverNow = Date.now();
+  for (const body of [
+    { serverNow, expiresAt: serverNow },
+    { serverNow, expiresAt: serverNow - 1 },
+    { serverNow, expiresAt: serverNow + 300_001 },
+    { expiresAt: serverNow + 300_000 },
+    { serverNow: 'invalid', expiresAt: serverNow + 300_000 },
+  ]) {
+    const connection = new RealtimeConnection({ url: 'wss://example.test/ws', roomId: 'classroom',
+      WebSocketClass: FakeSocket, storage: null, diagnostic: () => {},
+      requestLaunch: async roomId => grant(roomId),
+      fetcher: async () => Response.json({ ok: true, sessionToken, ...body }) });
+    await connection.start();
+    assert.equal(connection.socket, undefined);
+    connection.stop();
+  }
+});
 
 test('KNAS connector refuses plaintext public endpoints and URL credentials', () => {
   for (const url of ['ws://public.example/ws', 'wss://user:password@example.test/ws', 'wss://example.test/ws?token=bad'])
@@ -49,7 +118,7 @@ test('one-time grant is redeemed before hello; mutations wait for explicit serve
   socket.dispatchEvent(new Event('open'));
   assert.deepEqual(socket.sent[0], { type: 'hello', roomId: 'classroom', resumeToken: sessionToken });
   assert.equal(await connection.request('dropClaim', { id: 'g' }), false);
-  socket.message({ type: 'authenticated', resumeToken: 'mr1_' + 'c'.repeat(64), expiresAt: Date.now() + 30000 });
+  socket.message({ type: 'authenticated', resumeToken: 'mr1_' + 'c'.repeat(64), serverNow: Date.now(), expiresAt: Date.now() + 30000 });
   socket.message({ type: 'ready' });
   const promise = connection.request('dropClaim', { id: 'g' });
   const request = socket.sent.at(-1);
@@ -126,7 +195,7 @@ test('transient disconnect reconnects with the in-memory KNAS resume credential'
   await connection.start();
   const first = FakeSocket.instances.at(-1);
   first.dispatchEvent(new Event('open'));
-  first.message({ type: 'authenticated', resumeToken: 'mr1_' + 'd'.repeat(64), expiresAt: Date.now() + 30000 });
+  first.message({ type: 'authenticated', resumeToken: 'mr1_' + 'd'.repeat(64), serverNow: Date.now(), expiresAt: Date.now() + 30000 });
   first.message({ type: 'ready' });
   first.close(1006);
   await new Promise(resolve => setTimeout(resolve, 1050));
