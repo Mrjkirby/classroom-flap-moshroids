@@ -112,9 +112,13 @@ tokens manually or make browser-side calls to the private issuer.
 
 GitHub Pages serves the `main` branch. The staging page is published with that
 branch; publishing it does not change the production transport selector.
-The public staging page and isolated KNAS redemption/WebSocket routes are live,
-but a real authorized portal launch and authenticated classroom load test are
-still required before `classroomReady` or production transport can change.
+The public staging page and isolated KNAS redemption/WebSocket routes are live.
+On 2026-10-23, Chrome's existing Timez TEST session launched successfully:
+the issuer resolved identity, redemption returned HTTP 200, the game displayed
+`test` and `ONLINE · KNAS`, the spelling challenge returned to gameplay, and
+reload resumed the authenticated session without another grant. This verifies
+one real test account, not a classroom-scale authenticated load test. That
+classroom test is still required before changing readiness or production transport.
 
 The original `moshroids-realtime` container remains in deny-all standby; the
 authenticated staging service is separate. No existing KNAS service was
@@ -127,9 +131,9 @@ remains deny-all; the separate private auth-staging service handles launch
 redemption and game sessions. The isolated [Workers VPC staging
 edge](server/edge-staging/README.md) exposes `/health`, `/ws`, and
 `/api/launch/redeem`, plus a server-credential-protected POST `/verify` for the
-existing Snake tester-only staging control. Firebase remains selected. A real
-authorized portal launch and authenticated class-size test are still required
-before the public readiness gate or production transport can change.
+existing Snake tester-only staging control. Firebase remains selected. An
+authenticated class-size test is still required before the public readiness
+gate or production transport can change.
 
 Verification commands:
 
