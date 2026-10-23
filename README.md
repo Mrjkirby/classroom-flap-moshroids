@@ -64,6 +64,10 @@ sent over WebSocket and it rotates on reconnect. A tab-scoped session copy
 allows a page refresh without reusing the launch grant. Missing launch
 configuration fails closed; it never falls back to anonymous identity.
 
+The browser fetch adapter preserves the Window receiver. Passing native `fetch`
+as a connection method causes an illegal invocation before redemption reaches
+KNAS; `tests/transport-connection.mjs` covers this browser-specific regression.
+
 ### Isolated playable client
 
 [`knas-staging/`](knas-staging/) is a dedicated static shell around the common

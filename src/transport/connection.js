@@ -13,7 +13,8 @@ export function isLaunchGrant(grant, roomId, now = Date.now()) {
 
 export class RealtimeConnection {
   constructor({ url, roomId, requestLaunch, WebSocketClass = globalThis.WebSocket,
-    fetcher = globalThis.fetch, storage = globalThis.sessionStorage,
+    // Native browser fetch requires the Window receiver, not this connection.
+    fetcher = (...args) => globalThis.fetch(...args), storage = globalThis.sessionStorage,
     onMessage = () => {}, onStatus = () => {}, diagnostic = reportTransportDiagnostic }) {
     const parsed = new URL(url);
     if (parsed.username || parsed.password || parsed.search || parsed.hash ||

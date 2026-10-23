@@ -64,6 +64,28 @@ test('one-time grant is redeemed before hello; mutations wait for explicit serve
   const interrupted = connection.request('asteroidClaim', { id: 'a' });
   connection.stop(); assert.equal(await interrupted, false);
 });
+test('default browser fetch retains its Window receiver during launch redemption', async t => {
+  let calls = 0;
+  // Browser fetch rejects an object receiver; ordinary injected fetch mocks do not.
+  t.mock.method(globalThis, 'fetch', async function (url, options) {
+    assert.equal(this, globalThis, 'browser fetch must not receive the connection as its receiver');
+    calls++;
+    return redemption(url, options);
+  });
+  const connection = new RealtimeConnection({
+    url: 'wss://example.test/ws', roomId: 'classroom',
+    WebSocketClass: FakeSocket, storage: null,
+    diagnostic: () => {}, requestLaunch: async roomId => grant(roomId),
+  });
+  t.after(() => connection.stop());
+  await connection.start();
+  assert.equal(calls, 1, 'the browser must send exactly one redemption request');
+  assert.ok(connection.socket, 'successful redemption must open the WebSocket');
+  connection.socket.dispatchEvent(new Event('open'));
+  assert.deepEqual(connection.socket.sent[0], {
+    type: 'hello', roomId: 'classroom', resumeToken: sessionToken,
+  });
+});
 test('invalid grants and explicit authentication rejection fail closed without grant retries', async () => {
   const count = FakeSocket.instances.length;
   const rejected = new RealtimeConnection({
