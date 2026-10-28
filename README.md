@@ -17,6 +17,7 @@ MOSHROIDS is a browser-based multiplayer classroom Asteroids game. Players enter
 - All modes use the same Firebase anonymous sign-in session on the same site origin; switching URLs does not add another login system.
 - `src/teams/` owns half-size colored corner-base geometry, team damage rules, and remote volley reconstruction. Teams start neutral, join or switch on physical L-base contact, and reset to neutral on death. Only same-team player weapon damage is disabled. Team claims and fire snapshots use change/trigger writes on the existing player record and player listener; no bases or projectile positions are streamed. The existing asteroid, MR. K, gun, spelling, and shared-clock systems run in the Teams room.
 - `src/gauntlet/` owns the 1VW room transition, perimeter layout, cannon events, projectile reconstruction, and deterministic asteroid bounce trajectories. `bossState` in the 1VW room records the Survivor, phase, round, and shared start time. Cannon transactions store at most one accepted shot per player per second; no asteroid or turret positions are streamed.
+- `src/mrKShake.js` renders an 800 ms camera shake on each active client when its room receives a new, unique Mr. K destruction record. The existing atomic asteroid claim is the event; reconnect history is ignored and no camera frames are networked.
 - `src/spellingController.js` owns the spelling challenge UI, including word-copy and answer-paste guards. The word remains visible, and answers are typed with normal keyboard or mobile input.
 
 ## Run and verify
@@ -32,6 +33,8 @@ Run `node --test tests/spelling-input.mjs` for spelling copy/paste guards and th
 Run `node --test tests/gauntlet.mjs` for 1VW routing, atomic transition rules, perimeter controls, bounce behavior, cannon timing and size, collision protection, and projectile replay.
 
 Run `node --test tests/teams.mjs` for Teams routing, base geometry/contact, team transitions, player weapon rules, volley replay, and environmental hazards.
+
+Run `node --test tests/mr-k-shake.mjs` for shared Mr. K destruction shake, deduplication, reconnect and room isolation.
 
 Run `node --experimental-vm-modules --test server/test/*.test.mjs tests/*.mjs` for the complete local suite, including Firebase clock-skew drop publication/claim and KNAS room drop, late-join, single-winner, and respawn regressions. These are automated fixtures, not live student gameplay verification.
 

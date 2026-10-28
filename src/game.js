@@ -6,6 +6,7 @@ import { createCollisionSystem } from './collisionSystem.js';
 import { createGunDropSystem } from './gunDropSystem.js';
 import { HomingMissile } from './homingMissile.js';
 import { MrKRock } from './mrKRock.js';
+import { MrKShake } from './mrKShake.js';
 import { SafeZones } from './safeZone.js';
 import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
@@ -79,6 +80,8 @@ let multiplayerJoined = false;
 
 const camera =
   new Camera();
+
+const mrKShake = new MrKShake();
 
 let safeZones =
   null;
@@ -1205,6 +1208,8 @@ function update(dt, sharedNow) {
 
   asteroidMultiplayer.sync();
 
+  mrKShake.sync(getDestroyedAsteroids(), sharedNow);
+
   gunDropSystem.update();
 
   updateShips(
@@ -1441,6 +1446,9 @@ function draw() {
     height / 2
   );
 
+  const shake = mrKShake.offset(sharedClock.now());
+  ctx.translate(shake.x, shake.y);
+
   ctx.scale(
     camera.zoom,
     camera.zoom
@@ -1559,6 +1567,7 @@ bindPilotLogin(
   },
 
   (identity) => {
+    mrKShake.activate(sharedClock.now());
     const ship =
       world.ships.find(
         (candidate) =>
