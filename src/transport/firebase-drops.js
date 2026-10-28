@@ -25,6 +25,7 @@ import {
   runTransaction
 } from 'https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js';
 import { ROOM_PATH } from '../gameMode.js';
+import { sharedClock } from '../sharedClock.js';
 
 
 const GUN_DROPS_PATH =
@@ -204,8 +205,10 @@ export async function publishGunDrops(
 
   const writes = {};
 
+  // Use the same server-aligned clock as listeners and expiry checks.
+  // Device clocks can differ by more than the drop lifetime.
   const now =
-    Date.now();
+    sharedClock.now();
 
   drops.forEach(
     (drop) => {
@@ -330,7 +333,7 @@ export async function claimGunDrop(
 
           if (
             expiresAt > 0 &&
-            Date.now() >=
+            sharedClock.now() >=
               expiresAt
           ) {
             return undefined;
@@ -343,7 +346,7 @@ export async function claimGunDrop(
               currentUser.uid,
 
             claimedAt:
-              Date.now()
+              sharedClock.now()
           };
         },
 
@@ -423,7 +426,7 @@ export async function removeExpiredGunDrop(
 
   if (
     !drop ||
-    Date.now() <
+    sharedClock.now() <
       drop.expiresAt
   ) {
     return false;

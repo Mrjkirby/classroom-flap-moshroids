@@ -11,6 +11,7 @@ MOSHROIDS is a browser-based multiplayer classroom Asteroids game. Players enter
 - `src/asteroidDirector.js` derives normal field size as 10 × 2^MR. K destructions in the current shared epoch. The existing Firebase MR. K destruction record advances the generation once, and late joins replay those records to recover the same field. Time tiers still set replacement timing.
 - `src/transport/firebase-adapter.js`: active Firebase authentication, player presence, and pilot-login transport. `src/transport/index.js` is the provider-neutral import boundary used by game orchestration.
 - `src/gunDropSystem.js`, `src/gunDropMultiplayer.js`: gun drop gameplay and networking.
+- `src/weaponSystem.js` owns gun count and one pickup per earned gun on death. The base gun stays on respawn. Firebase stores room drops in Realtime Database and uses the shared server-aligned clock for their ten-second lifetime and atomic claims; KNAS staging uses its server-stamped in-memory room drops and atomic claims. Both use the same local collision and gun award logic.
 - Other `src/` modules own the corresponding physics, entities, collisions, spelling, and weapons.
 - `src/gameMode.js` routes `/` to Classic, `/1vw/` to One vs World, and `/teams/` to Teams. All pages load `src/game.js` and use separate Firebase rooms (`classroom`, `classroom-1vw`, and `classroom-teams`).
 - All modes use the same Firebase anonymous sign-in session on the same site origin; switching URLs does not add another login system.
@@ -31,6 +32,8 @@ Run `node --test tests/spelling-input.mjs` for spelling copy/paste guards and th
 Run `node --test tests/gauntlet.mjs` for 1VW routing, atomic transition rules, perimeter controls, bounce behavior, cannon timing and size, collision protection, and projectile replay.
 
 Run `node --test tests/teams.mjs` for Teams routing, base geometry/contact, team transitions, player weapon rules, volley replay, and environmental hazards.
+
+Run `node --experimental-vm-modules --test server/test/*.test.mjs tests/*.mjs` for the complete local suite, including Firebase clock-skew drop publication/claim and KNAS room drop, late-join, single-winner, and respawn regressions. These are automated fixtures, not live student gameplay verification.
 
 ## Deployment
 

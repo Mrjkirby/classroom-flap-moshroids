@@ -108,8 +108,8 @@ export class WeaponSystem {
      ======================================================= */
 
   /*
-   * Every gun owned by a destroyed player becomes one
-   * independent pickup.
+   * The starting gun is granted on every spawn. Only guns
+   * earned beyond it become independent pickups.
    */
   createDrops(
     x,
@@ -122,7 +122,7 @@ export class WeaponSystem {
       Math.max(
         0,
         Math.floor(
-          Number(gunCount) || 0
+          (Number(gunCount) || 0) - STARTING_GUNS
         )
       );
 
