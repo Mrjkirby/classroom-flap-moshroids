@@ -11,8 +11,7 @@
 <body>
 
   <!-- =========================================================
-       PILOT LOGIN
-       Firebase multiplayer will attach to this in the next step.
+       SECURE CLASSROOM LAUNCH
        ========================================================= -->
   <section
     class="pilot-login-overlay"
@@ -22,34 +21,17 @@
     <div class="pilot-login-panel">
       <div class="wormhole-kicker">MOSHROIDS MULTIPLAYER</div>
 
-      <h1 id="pilotLoginTitle">ENTER PILOT NAME</h1>
+      <h1 id="pilotLoginTitle">LAUNCH FROM YOUR CLASSROOM</h1>
 
-      <p>IDENTIFY YOUR SHIP</p>
-
-      <form id="pilotLoginForm">
-        <input
-          id="pilotNameInput"
-          type="text"
-          maxlength="24"
-          autocomplete="off"
-          autocapitalize="words"
-          spellcheck="false"
-          placeholder="PILOT NAME"
-          aria-label="Pilot name"
-          required
-        >
-
-        <button id="pilotEnterButton" type="submit">
-          ENTER MOSH
-        </button>
-      </form>
+      <p>Sign in with your existing classroom account, then choose MOSHROIDS.</p>
+      <a class="classroom-launch-link" href="https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site/">OPEN CLASSROOM PORTAL</a>
 
       <div
         class="pilot-login-status"
         id="pilotLoginStatus"
         aria-live="polite"
       >
-        READY
+        WAITING FOR SECURE CLASSROOM LAUNCH
       </div>
     </div>
   </section>
@@ -244,7 +226,7 @@
 
   </main>
 
-  <script type="module" src="src/game.js"></script>
+  <script type="module" src="src/bootstrap.js"></script>
 
 </body>
 </html>

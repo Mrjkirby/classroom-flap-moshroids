@@ -1,164 +1,105 @@
 # Classroom Flap Moshroids
 
-MOSHROIDS is a browser-based multiplayer classroom Asteroids game. Players enter a pilot name, sign in anonymously through Firebase, and share a room.
+MOSHROIDS is a multiplayer classroom Asteroids game. The prepared primary client
+uses the existing LLP/Snake login and KNAS realtime server. GitHub Pages continues
+to serve the same game URLs. No student PIN is sent to KNAS.
+
+## Release status — November 3, 2026
+
+The shared LLP login repair is active on the existing deployment as version 68
+(source `9ca6275`). It preserves the roster and all identity/access-control
+checks while allowing renamed Aspen reporting columns. Activation used the
+already authorized deployment-owner browser account; no URL or access settings
+changed. The backend suite passed 224 tests.
+
+Primary KNAS cutover is undergoing live verification after 126 MOSHROIDS tests,
+190 Snake tests, TypeScript and production build passed. Synthetic 26-client
+checks passed in each mode with zero duplicate claims, identity crossovers or
+state divergence. Local Chrome boot and reload passed in Classic and Teams;
+1VW boot passed. These checks are not a live class of authenticated students.
+
+Snake Site version 37 (`855ab8f`) supplies three mode choices and fresh grants
+for session renewal. Previous Pages release `9e21018` and Snake version 36 remain
+rollback points. No gameplay database migration or NAS rebuild is required.
 
 ## Structure
 
-- `index.html`, `1vw/index.html`, `teams/index.html`, `style.css`: mode entry pages and presentation.
-- `src/game.js`: game setup and orchestration.
-- `src/asteroid.js`, `src/asteroidDirector.js`, `src/asteroidMultiplayer.js`, `src/asteroidNetwork.js`: asteroid entity, field generation, shared destruction coordination, and Firebase transport.
-- `src/sharedClock.js`, `src/worldConfig.js`: Firebase server-time offset and fixed shared arena dimensions. Asteroid positions are derived from immutable spawn state and shared time; no position frames are sent to Firebase.
-- `src/asteroidDirector.js` derives normal field size as 10 × 2^MR. K destructions in the current shared epoch. The existing Firebase MR. K destruction record advances the generation once, and late joins replay those records to recover the same field. Time tiers still set replacement timing.
-- `src/transport/firebase-adapter.js`: active Firebase authentication, player presence, and pilot-login transport. `src/transport/index.js` is the provider-neutral import boundary used by game orchestration.
-- `src/gunDropSystem.js`, `src/gunDropMultiplayer.js`: gun drop gameplay and networking.
-- `src/weaponSystem.js` owns gun count and one pickup per earned gun on death. The base gun stays on respawn. Firebase stores room drops in Realtime Database and uses the shared server-aligned clock for their ten-second lifetime and atomic claims; KNAS staging uses its server-stamped in-memory room drops and atomic claims. Both use the same local collision and gun award logic.
-- Other `src/` modules own the corresponding physics, entities, collisions, spelling, and weapons.
-- `src/gameMode.js` routes `/` to Classic, `/1vw/` to One vs World, and `/teams/` to Teams. All pages load `src/game.js` and use separate Firebase rooms (`classroom`, `classroom-1vw`, and `classroom-teams`).
-- All modes use the same Firebase anonymous sign-in session on the same site origin; switching URLs does not add another login system.
-- `src/teams/` owns half-size colored corner-base geometry, team damage rules, and remote volley reconstruction. Teams start neutral, join or switch on physical L-base contact, and reset to neutral on death. Only same-team player weapon damage is disabled. Team claims and fire snapshots use change/trigger writes on the existing player record and player listener; no bases or projectile positions are streamed. The existing asteroid, MR. K, gun, spelling, and shared-clock systems run in the Teams room.
-- `src/gauntlet/` owns the 1VW room transition, perimeter layout, cannon events, projectile reconstruction, and deterministic asteroid bounce trajectories. `bossState` in the 1VW room records the Survivor, phase, round, and shared start time. Cannon transactions store at most one accepted shot per player per second; no asteroid or turret positions are streamed.
-- `src/mrKShake.js` renders an 800 ms camera shake on each active client when its room receives a new, unique Mr. K destruction record. The existing atomic asteroid claim is the event; reconnect history is ignored and no camera frames are networked.
-- `src/spellingController.js` owns the spelling challenge UI, including word-copy and answer-paste guards. The word remains visible, and answers are typed with normal keyboard or mobile input.
+- `index.html`, `teams/index.html`, `1vw/index.html`, `style.css`: existing URLs/UI.
+- `src/bootstrap.js`, `src/transport/launch-adapter.js`: shared authenticated entry,
+  one-use launch fragment removal, exact-origin opener grants. Staging reuses them.
+- `src/game.js`: game orchestration; focused sibling modules own ships, collisions,
+  weapons, spelling, asteroids, Teams and 1VW rules.
+- `src/transport/config.js`, `index.js`: KNAS selection and provider boundary.
+  Published bootstraps pin KNAS; no URL selector or automatic Firebase fallback.
+  Legacy Firebase adapters remain available only to explicit trusted configuration.
+- `src/transport/connection.js`: short sessions, WebSocket, bounded reconnect,
+  acknowledgements and renewal 90 seconds before expiry. Only a fresh authorized
+  grant can create another five-minute lease. Old socket events are ignored.
+- `src/transport/knas-store.js`, `knas-player.js`, `knas-shared.js`: replicated
+  room state and adapters for existing gameplay interfaces.
+- `server/src/`: existing in-memory room authority, one-use grant verification,
+  rotating reconnect credentials, atomic claims, snapshots and shared events.
+- `src/weaponSystem.js`, `gunDropSystem.js`, `gunDropMultiplayer.js`: one drop per
+  earned gun on death; the base gun remains on respawn. Actual upgrades are gun
+  count, not a separate inventory. Room drops expire after ten seconds; claims
+  are atomic. Firebase uses server-aligned time; KNAS stamps time on its server.
+- `src/mrKShake.js`: one local 800 ms shake for each new shared Mr. K destruction
+  ID. Room isolation and join baselines prevent cross-room effects/history replay.
+- `src/asteroidDirector.js`: deterministic shared-time asteroid generation;
+  normal asteroid count doubles from ten per Mr. K generation.
 
-## Run and verify
+## Login and services
 
-The site uses native browser ES modules and has no package build step. From the repository root, run `python3 -m http.server 8000`, then open `http://localhost:8000/`. Enter a pilot name to test Firebase authentication and room joining. Internet access and a Firebase-authorized browser origin are needed for login.
+Sign into https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site/ with the existing
+classroom account and choose a MOSHROIDS mode. Keep that portal tab open for
+renewal. A direct game visit offers the same portal; it cannot invent a player.
+Closing the portal means relaunch is required when the current lease expires.
 
-Run `node --experimental-vm-modules tests/import-graph.mjs` to check local import paths, module syntax, exports, and circular dependencies.
+| URL | Room |
+| --- | --- |
+| https://mrjkirby.github.io/classroom-flap-moshroids/ | `classroom` |
+| https://mrjkirby.github.io/classroom-flap-moshroids/teams/ | `classroom-teams` |
+| https://mrjkirby.github.io/classroom-flap-moshroids/1vw/ | `classroom-1vw` |
+| https://mrjkirby.github.io/classroom-flap-moshroids/knas-staging/ | `classroom` |
 
-Run `node --test tests/asteroid-sync.mjs` for deterministic movement, late joins, wrapping, destruction, respawn, epoch changes, and 26-client replay.
+The existing edge is `wss://moshroids-staging.mrjkirby.workers.dev/ws`, with
+`POST /api/launch/redeem` on the same HTTPS host. Its existing private route
+reaches `moshroids-auth-staging` on KNAS. The name remains unchanged during
+cutover. The standby `moshroids-realtime` container and other services remain
+separate. No raw NAS port is exposed and no Cloudflare VPC change is needed.
 
-Run `node --test tests/spelling-input.mjs` for spelling copy/paste guards and the existing practice/retrieval flow.
+Only launch/renewal checks use LLP/EDU; game frames use KNAS. Sessions and rooms
+are transient and vanish on server restart. No database or inventory was added.
+See [server operations](server/README.md), [authenticated instance](server/auth-staging/README.md)
+and [historical audit](server/TRANSPORT-AUDIT.md).
 
-Run `node --test tests/gauntlet.mjs` for 1VW routing, atomic transition rules, perimeter controls, bounce behavior, cannon timing and size, collision protection, and projectile replay.
+## Run and test
 
-Run `node --test tests/teams.mjs` for Teams routing, base geometry/contact, team transitions, player weapon rules, volley replay, and environmental hazards.
-
-Run `node --test tests/mr-k-shake.mjs` for shared Mr. K destruction shake, deduplication, reconnect and room isolation.
-
-Run `node --experimental-vm-modules --test server/test/*.test.mjs tests/*.mjs` for the complete local suite, including Firebase clock-skew drop publication/claim and KNAS room drop, late-join, single-winner, and respawn regressions. These are automated fixtures, not live student gameplay verification.
-
-## Deployment
-
-GitHub Pages serves the root of the `main` branch at https://mrjkirby.github.io/classroom-flap-moshroids/. The browser loads `src/game.js` directly from `index.html`, so imported filenames must match tracked files exactly, including case. Firebase hosts anonymous authentication and the multiplayer room; its public client configuration is in `src/transport/firebase-adapter.js`.
-
-GitHub Pages serves `1vw/index.html` directly at https://mrjkirby.github.io/classroom-flap-moshroids/1vw/, including direct visits and refreshes. 1VW requires the existing Firebase `bossState`, player, gun-drop, and asteroid write boundaries to be enabled for the separate `classroom-1vw` room. If database rules deny access, login fails closed.
-
-GitHub Pages serves `teams/index.html` directly at https://mrjkirby.github.io/classroom-flap-moshroids/teams/, including direct visits and refreshes. Teams uses the existing authenticated player write boundary in the separate `classroom-teams` room. If database rules deny access, login fails closed.
-
-## KNAS realtime transport (gated; Firebase still default)
-
-The [private EDU-authenticated staging instance](server/auth-staging/README.md)
-uses the existing Snake/LLP issuer. It is separate from the public deny-all
-server and publishes no ports. Firebase remains the production default and
-rollback until staging verification is complete.
-
-`src/transport/config.js` selects `firebase` (default) or `knas`. All player,
-asteroid/MR. K, drop, Teams and 1VW networking follows this selector. KNAS mode
-does not import Firebase; rollback adapters retain the existing implementation.
-Rendering, local physics, collisions, weapons, spelling and questions remain in
-the browser. `connection.js` owns the socket, temporary session credentials,
-heartbeat, bounded reconnect and request acknowledgements; `knas-store.js` owns
-replicated caches; `knas-player.js` and `knas-shared.js` adapt the existing game
-interfaces.
-
-The selected KNAS configuration requires `websocketUrl` and a
-`requestLaunch(roomId)` callback returning a fresh grant from the existing
-classroom session. The server consumes it at `POST /api/launch/redeem`, then
-issues a separate five-minute KNAS session. Only that session credential is
-sent over WebSocket and it rotates on reconnect. A tab-scoped session copy
-allows a page refresh without reusing the launch grant. Missing launch
-configuration fails closed; it never falls back to anonymous identity.
-
-The browser fetch adapter preserves the Window receiver. Passing native `fetch`
-as a connection method causes an illegal invocation before redemption reaches
-KNAS; `tests/transport-connection.mjs` covers this browser-specific regression.
-
-Game-session responses include `serverNow`. The browser validates the five-minute
-lifetime against that server timestamp, not the school computer's wall clock.
-Previously even a two-second slow clock could reject a successful HTTP 200
-redemption before opening WSS. Restored credentials are only reconnect candidates:
-KNAS still enforces absolute expiry, room, Origin and one-use rotation before
-joining. No clock adjustment can extend a session. Deploy the additive server
-response change before the matching client. Real loopback HTTP/WSS tests cover
-clock differences up to an hour, reconnect and server-enforced expiration.
-
-### Isolated playable client
-
-[`knas-staging/`](knas-staging/) is a dedicated static shell around the common
-game implementation. Its intended public page is
-`https://mrjkirby.github.io/classroom-flap-moshroids/knas-staging/`. It pins KNAS to
-`wss://moshroids-staging.mrjkirby.workers.dev/ws`; it cannot select Firebase or
-override the endpoint from a URL. It displays **MOSHROIDS — KNAS STAGING** and
-does not load Firebase SDK modules. Production entry pages keep the Firebase
-default.
-
-The root URL `/` is still the legacy Firebase production entry and displays its
-pilot-name form. It is not a KNAS launch destination. The LLP game-launch action
-must open `/knas-staging/` and provide a fresh grant by the supported fragment
-or trusted opener handoff. If a test lands on `/` and shows the pilot-name form,
-the KNAS client was not loaded; this is a launch-routing failure, not a KNAS
-authentication result. The staging client itself never falls back to Firebase.
-
-The existing authenticated Snake/LLP launcher must issue every launch token.
-It may open the page using a one-time URL fragment:
-
-```text
-https://mrjkirby.github.io/classroom-flap-moshroids/knas-staging/#t=ml1_<64-hex>&roomId=classroom&expiresAt=<ISO-8601>
-```
-
-The fragment is removed from browser history before launch; unlike a query
-string, it is not sent to GitHub Pages, Cloudflare, or referrer logs. The staging
-page also supports the existing exact-origin opener handoff from
-`https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site`. Both paths accept only
-a fresh `ml1_` token, audience `moshroids`, a permitted room and an expiry no
-more than two minutes away. The launcher must never include identity or service
-secrets.
-
-The staging browser and private KNAS service emit diagnostic stage/outcome
-events, HTTP status codes and WebSocket close codes only. They do not log launch
-grants, session credentials, PINs, student identifiers or display names.
-
-KNAS verifies and atomically consumes each grant through the existing LLP
-service. It derives identity there, creates a separate reconnectable game
-session, and never accepts identity fields from the browser. Direct access
-without an unexpired session or a fresh portal launch is rejected. Do not paste
-tokens manually or make browser-side calls to the private issuer.
-
-GitHub Pages serves the `main` branch. The staging page is published with that
-branch; publishing it does not change the production transport selector.
-The public staging page and isolated KNAS redemption/WebSocket routes are live.
-On 2026-10-23, Chrome's existing Timez TEST session launched successfully:
-the issuer resolved identity, redemption returned HTTP 200, the game displayed
-`test` and `ONLINE · KNAS`, the spelling challenge returned to gameplay, and
-reload resumed the authenticated session without another grant. This verifies
-one real test account, not a classroom-scale authenticated load test. That
-classroom test is still required before changing readiness or production transport.
-
-The original `moshroids-realtime` container remains in deny-all standby; the
-authenticated staging service is separate. No existing KNAS service was
-repurposed. See [server setup](server/README.md) and [operation inventory,
-measurements and release gate](server/TRANSPORT-AUDIT.md).
-
-The dedicated [Astroids-KNAS connector](server/cloudflared/README.md) reuses the
-existing isolated Docker bridge. The original `moshroids-realtime` service
-remains deny-all; the separate private auth-staging service handles launch
-redemption and game sessions. The isolated [Workers VPC staging
-edge](server/edge-staging/README.md) exposes `/health`, `/ws`, and
-`/api/launch/redeem`, plus a server-credential-protected POST `/verify` for the
-existing Snake tester-only staging control. Firebase remains selected. An
-authenticated class-size test is still required before the public readiness
-gate or production transport can change.
-
-Verification commands:
+Native browser ES modules require no transpilation build. Serve this directory
+with `python3 -m http.server 8000` for static UI inspection. Localhost is not a
+production-authorized login origin; automated loopback tests use fixtures.
 
 ```sh
+node --experimental-vm-modules tests/import-graph.mjs
 node --experimental-vm-modules --test server/test/*.test.mjs tests/*.mjs
 node server/test/performance.mjs
+```
+
+The full suite covers shared drops, simultaneous claims, no-upgrade death,
+respawn, late join, Mr. K deduplication/room isolation, all three game modes,
+security, reconnect, renewal and import validity. The capacity command uses 26
+synthetic WebSocket clients in each room and reports traffic/latency. Neither
+proves a live class of authenticated students. Optional browser regression:
+
+```sh
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.js CHROME_PATH=/absolute/path/to/chrome node tools/verify-transport-browser.mjs
 ```
 
-There is no transpilation/typecheck build in this native-JavaScript repository;
-the import-graph check validates syntax, static/dynamic local paths and exports.
-Browser tests exercise the three game modes and isolated KNAS staging shell with
-synthetic grants. They do not write classroom data or consume real grants.
+## Deployment
+
+GitHub Pages automatically publishes `main`; hold publication until required release checks pass. Publish only after tests pass. Server code already
+matches the running authenticated KNAS container (shared state, match and HTTP
+server hashes verified November 3); this client cutover requires no NAS rebuild.
+Do not redeploy shared Firebase, change runtime secrets, or migrate live data.
+After release, verify classroom login, displayed `ONLINE · KNAS`, three mode
+routes, reload and renewal, plus browser traffic without Firebase gameplay.

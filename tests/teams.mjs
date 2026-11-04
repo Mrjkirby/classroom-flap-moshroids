@@ -19,7 +19,7 @@ test('Teams, Classic and 1VW routes load the shared engine in isolated rooms', (
   assert.equal(modeForPath('/classroom-flap-moshroids/teams/index.html'), 'teams');
   assert.equal(modeForPath('/classroom-flap-moshroids/1vw/'), '1vw');
   const html = readFileSync(new URL('../teams/index.html', import.meta.url), 'utf8');
-  assert.match(html, /src="\.\.\/src\/game\.js"/);
+  assert.match(html, /src="\.\.\/src\/bootstrap\.js"/);
   assert.match(html, /href="\.\.\/style\.css"/);
 });
 

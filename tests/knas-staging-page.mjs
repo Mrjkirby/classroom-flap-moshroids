@@ -4,20 +4,23 @@ import test from 'node:test';
 import { modeForPath } from '../src/gameMode.js';
 
 const html = await readFile(new URL('../knas-staging/index.html', import.meta.url), 'utf8');
-const bootstrap = await readFile(new URL('../knas-staging/bootstrap.js', import.meta.url), 'utf8');
-const launchAdapter = await readFile(new URL('../knas-staging/launch-adapter.js', import.meta.url), 'utf8');
+const bootstrap = await readFile(new URL('../src/bootstrap.js', import.meta.url), 'utf8');
+const stagingBootstrap = await readFile(new URL('../knas-staging/bootstrap.js', import.meta.url), 'utf8');
+const config = await readFile(new URL('../src/transport/config.js', import.meta.url), 'utf8');
+const launchAdapter = await readFile(new URL('../src/transport/launch-adapter.js', import.meta.url), 'utf8');
 
 test('the isolated playable page is visibly labeled and uses the common game shell', () => {
   assert.match(html, /MOSHROIDS — KNAS STAGING/);
   assert.match(html, /id="gameCanvas"/);
   assert.match(html, /data-wormhole-form/);
-  assert.match(bootstrap, /await import\('\.\.\/src\/game\.js'\)/);
+  assert.match(bootstrap, /await import\('\.\/game\.js'\)/);
+  assert.match(stagingBootstrap, /import '\.\.\/src\/bootstrap\.js'/);
   assert.equal(modeForPath('/classroom-flap-moshroids/knas-staging/'), 'classic');
 });
 
 test('staging pins KNAS transport and accepts only its secure launch adapter', () => {
   assert.match(bootstrap, /provider: 'knas'/);
-  assert.match(bootstrap, /wss:\/\/moshroids-staging\.mrjkirby\.workers\.dev\/ws/);
+  assert.match(config, /wss:\/\/moshroids-staging\.mrjkirby\.workers\.dev\/ws/);
   assert.match(bootstrap, /createOpenerLaunchAdapter/);
   assert.doesNotMatch(html, /id="pilotLoginForm"/);
   assert.doesNotMatch(bootstrap, /location\.search|localStorage/);

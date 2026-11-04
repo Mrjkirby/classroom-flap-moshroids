@@ -1,5 +1,7 @@
 import { reportTransportDiagnostic } from './diagnostics.js';
 
+const RENEW_BEFORE_MS = 90_000;
+
 // Compare server timestamps only. A school computer's wall clock is not an
 // authentication authority, and even small skew can reject a valid session.
 function validSessionLifetime(expiresAt, serverNow) {
@@ -97,9 +99,55 @@ export class RealtimeConnection {
       throw new Error('Launch token redemption failed.');
     }
     this.diagnostic('launch_exchange', { stage: 'accepted', httpStatus: response.status });
-    this.resumeToken = result.sessionToken;
-    this.expiresAt = result.expiresAt;
+    return result;
+  }
+  acceptSession(token, expiresAt) {
+    this.resumeToken = token;
+    this.expiresAt = expiresAt;
     this.saveSession(this.resumeToken, this.expiresAt);
+  }
+  settlePending() {
+    for (const item of this.pending.values()) { clearTimeout(item.timer); item.resolve(false); }
+    this.pending.clear();
+  }
+  scheduleRenewal(expiresAt, serverNow) {
+    clearTimeout(this.renewal);
+    // Relative server time avoids trusting the classroom computer's wall clock.
+    // Only a fresh grant from the existing portal can authorize another lease.
+    this.renewal = setTimeout(() => this.renewSession(),
+      Math.max(1000, expiresAt - serverNow - RENEW_BEFORE_MS));
+  }
+  async renewSession() {
+    if (this.stopped || this.renewing || !this.ready) return;
+    clearTimeout(this.renewal);
+    const socket = this.socket;
+    this.renewing = true;
+    this.diagnostic('session_renewal', { stage: 'attempted', fallbackInvoked: false });
+    try {
+      const grant = await this.requestLaunch(this.roomId);
+      if (this.stopped || this.socket !== socket) return;
+      if (!isLaunchGrant(grant, this.roomId)) throw new Error('Invalid classroom grant.');
+      const result = await this.redeem(grant);
+      if (this.stopped || this.socket !== socket) return;
+      this.acceptSession(result.sessionToken, result.expiresAt);
+      this.openSocket();
+    } catch {
+      if (this.stopped || this.socket !== socket) return;
+      this.diagnostic('session_renewal', { stage: 'failed', fallbackInvoked: false });
+      // An unavailable/closed portal cannot extend a lease. Keep the current
+      // valid socket until its original server-enforced expiry.
+      this.onStatus(this.ready, 'Session renewal unavailable. Reopen MOSHROIDS from your classroom portal.');
+    } finally {
+      this.renewing = false;
+      if (!this.stopped && this.socket === socket && !this.ready && this.resumeToken)
+        this.scheduleReconnect();
+    }
+  }
+  scheduleReconnect() {
+    clearTimeout(this.retry);
+    this.attempts = (this.attempts || 0) + 1;
+    if (this.attempts <= 5) this.retry = setTimeout(() => this.connect(), Math.min(1000 * 2 ** (this.attempts - 1), 10000));
+    else this.onStatus(false, 'Connection unavailable. Reopen from your classroom session.');
   }
   start() { this.stopped = false; return this.connect(); }
   async connect() {
@@ -111,8 +159,11 @@ export class RealtimeConnection {
         this.clearSession();
         if (typeof this.requestLaunch !== 'function') throw new Error('Classroom launch is not configured.');
         const grant = await this.requestLaunch(this.roomId);
+        if (this.stopped) return;
         if (!isLaunchGrant(grant, this.roomId)) throw new Error('Invalid classroom grant.');
-        await this.redeem(grant);
+        const result = await this.redeem(grant);
+        if (this.stopped) return;
+        this.acceptSession(result.sessionToken, result.expiresAt);
       }
     } catch {
       this.diagnostic('launch_flow', { stage: 'failed', fallbackInvoked: false });
@@ -120,20 +171,32 @@ export class RealtimeConnection {
       return; // Fail closed; never fall back to anonymous Firebase identity.
     }
     if (this.stopped) return;
+    this.openSocket();
+  }
+  openSocket() {
     this.diagnostic('websocket', { stage: 'attempted', fallbackInvoked: false });
     let socket;
     try {
-      socket = this.socket = new this.WebSocketClass(this.url);
+      socket = new this.WebSocketClass(this.url);
     } catch {
       this.diagnostic('websocket', { stage: 'construction_error', fallbackInvoked: false });
       this.onStatus(false, 'Connection unavailable');
       return;
     }
+    const previous = this.socket;
+    this.previousSocket?.close();
+    this.previousSocket = previous;
+    this.socket = socket;
+    this.ready = false;
+    clearTimeout(this.retry); clearTimeout(this.renewal); clearInterval(this.heartbeat);
+    this.settlePending();
     socket.addEventListener('open', () => {
+      if (this.stopped || this.socket !== socket) return;
       this.diagnostic('websocket', { stage: 'open', fallbackInvoked: false });
       socket.send(JSON.stringify({ type: 'hello', roomId: this.roomId, resumeToken: this.resumeToken }));
     });
     socket.addEventListener('message', event => {
+      if (this.stopped || this.socket !== socket) return;
       let value;
       try { value = JSON.parse(event.data); } catch { socket.close(); return; }
       if (value.type === 'authenticated') {
@@ -143,11 +206,11 @@ export class RealtimeConnection {
           socket.close();
           return;
         }
-        this.resumeToken = value.resumeToken;
-        this.expiresAt = value.expiresAt;
-        this.saveSession(this.resumeToken, this.expiresAt);
+        this.acceptSession(value.resumeToken, value.expiresAt);
+        this.scheduleRenewal(value.expiresAt, value.serverNow);
       }
       if (value.type === 'ready') {
+        this.previousSocket?.close(); this.previousSocket = null;
         this.ready = true; this.attempts = 0; this.onStatus(true, 'Connected');
         clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => this.send({ type: 'heartbeat', sentAt: Date.now() }), 5000);
@@ -160,27 +223,33 @@ export class RealtimeConnection {
       this.onMessage(value);
     });
     socket.addEventListener('close', event => {
+      if (this.socket !== socket) return;
       this.diagnostic('websocket', {
         stage: 'closed',
         closeCode: event.code,
         fallbackInvoked: false,
       });
-      this.ready = false; clearInterval(this.heartbeat);
-      for (const item of this.pending.values()) { clearTimeout(item.timer); item.resolve(false); }
-      this.pending.clear();
+      this.ready = false; clearInterval(this.heartbeat); clearTimeout(this.renewal);
+      this.previousSocket?.close(); this.previousSocket = null;
+      this.settlePending();
       this.onStatus(false, 'Disconnected');
-      if (this.stopped || event.code === 4001 || event.code === 4004) return;
+      if (this.stopped) return;
+      if (event.code === 4001 || event.code === 4004) {
+        // A replacement launch/full room is terminal, including any renewal
+        // already waiting for the portal. It must not reclaim this connection.
+        this.socket = null;
+        return;
+      }
       if (event.code === 4003) {
         this.clearSession();
         this.onStatus(false, 'Game session expired or rejected. Reopen MOSHROIDS from your classroom portal.');
         return;
       }
       // Never replay state-changing actions after an ambiguous disconnect.
-      this.attempts = (this.attempts || 0) + 1;
-      if (this.attempts <= 5) this.retry = setTimeout(() => this.connect(), Math.min(1000 * 2 ** (this.attempts - 1), 10000));
-      else this.onStatus(false, 'Connection unavailable. Reopen from your classroom session.');
+      if (!this.renewing) this.scheduleReconnect();
     });
     socket.addEventListener('error', () => {
+      if (this.stopped || this.socket !== socket) return;
       this.diagnostic('websocket', { stage: 'error', fallbackInvoked: false });
       this.onStatus(false, 'Connection unavailable');
     });
@@ -200,5 +269,9 @@ export class RealtimeConnection {
       }
     });
   }
-  stop() { this.stopped = true; this.resumeToken = null; clearTimeout(this.retry); clearInterval(this.heartbeat); this.socket?.close(); }
+  stop() {
+    this.stopped = true; this.resumeToken = null;
+    clearTimeout(this.retry); clearTimeout(this.renewal); clearInterval(this.heartbeat);
+    this.settlePending(); this.socket?.close(); this.previousSocket?.close(); this.previousSocket = null;
+  }
 }

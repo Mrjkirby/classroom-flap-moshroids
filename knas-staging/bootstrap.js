@@ -1,9 +1,2 @@
-import { createOpenerLaunchAdapter } from './launch-adapter.js';
-
-globalThis.MOSHROIDS_TRANSPORT_CONFIG = Object.freeze({
-  provider: 'knas',
-  websocketUrl: 'wss://moshroids-staging.mrjkirby.workers.dev/ws',
-  requestLaunch: createOpenerLaunchAdapter().requestLaunch,
-});
-
-await import('../src/game.js');
+// Preserve the existing staging URL while sharing the primary launch flow.
+import '../src/bootstrap.js';

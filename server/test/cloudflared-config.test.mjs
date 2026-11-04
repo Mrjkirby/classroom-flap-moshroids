@@ -92,9 +92,9 @@ test('empty, whitespace, multiline, Docker command and malformed envelope are re
   }
 });
 
-test('public selector remains Firebase and credential files are Git-ignored', () => {
+test('public selector uses KNAS and credential files remain Git-ignored', () => {
   const config = readFileSync(new URL('../../src/transport/config.js', import.meta.url), 'utf8');
-  assert.match(config, /configured\.provider === 'knas' \? 'knas' : 'firebase'/);
+  assert.match(config, /configured\.provider === 'firebase' \? 'firebase' : 'knas'/);
   const ignore = readFileSync(new URL('../../.gitignore', import.meta.url), 'utf8');
   assert.match(ignore, /server\/cloudflared\/secrets\//);
   assert.match(ignore, /\*\*\/tunnel-token/);

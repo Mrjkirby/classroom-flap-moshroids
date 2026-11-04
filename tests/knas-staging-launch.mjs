@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createOpenerLaunchAdapter, LLP_LAUNCHER_ORIGIN } from '../knas-staging/launch-adapter.js';
+import { createOpenerLaunchAdapter, LLP_LAUNCHER_ORIGIN } from '../src/transport/launch-adapter.js';
 
 function fakeWindow({ respond } = {}) {
   const listeners = new Set();
@@ -32,7 +32,7 @@ const grant = roomId => ({
   roomId,
 });
 
-test('staging requests a one-time grant from only its authorized same-origin opener', async () => {
+test('shared launcher requests a one-time grant from only its authorized same-origin opener', async () => {
   let harness;
   harness = fakeWindow({ respond: ({ message, opener, listeners }) => {
     dispatch(listeners, { source: {}, origin: LLP_LAUNCHER_ORIGIN, data: {
@@ -55,7 +55,7 @@ test('staging requests a one-time grant from only its authorized same-origin ope
   assert.equal(harness.listeners.size, 0);
 });
 
-test('staging rejects direct navigation without an LLP opener and rejects wrong-room grants', async () => {
+test('shared launcher rejects direct navigation without an LLP opener and rejects wrong-room grants', async () => {
   const direct = createOpenerLaunchAdapter({ windowRef: { opener: null } });
   await assert.rejects(direct.requestLaunch('classroom'), /authorized LLP launch/);
 
@@ -69,7 +69,7 @@ test('staging rejects direct navigation without an LLP opener and rejects wrong-
   assert.equal(harness.listeners.size, 0);
 });
 
-test('staging does not accept a grant from a mismatched request id', async () => {
+test('shared launcher does not accept a grant from a mismatched request id', async () => {
   const harness = fakeWindow({ respond: ({ message, opener, listeners }) => {
     dispatch(listeners, { source: opener, origin: LLP_LAUNCHER_ORIGIN, data: {
       type: 'moshroids:launch-grant', requestId: `${message.requestId}-other`, grant: grant('classroom'),

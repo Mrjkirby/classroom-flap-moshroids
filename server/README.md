@@ -1,9 +1,10 @@
-# MOSHROIDS realtime server (pre-production)
+# MOSHROIDS realtime server
 
-This isolated WebSocket relay is wired through the optional KNAS browser adapter.
-Firebase remains the public default. The KNAS container is deployed in explicit
-deny-all standby: secrets, issuer release, secure ingress and real classroom
-launch wiring still gate public cutover. See [the audit](TRANSPORT-AUDIT.md).
+The authenticated `moshroids-auth-staging` service is running on KNAS behind the
+existing secure edge. The original `moshroids-realtime` stays deny-all standby.
+The primary client cutover uses the repaired existing
+LLP login and requires live verification; see [current release status](../README.md).
+Earlier infrastructure gates below are retained as deployment history.
 
 ## Ownership
 
@@ -25,19 +26,22 @@ The existing EDU compatibility service now owns `POST /api/moshroids`. Configure
 
 The browser redeems its fresh `ml1_` token at `POST /api/launch/redeem` with `{ token, roomId }`. This route requires the exact allowed Origin, accepts JSON only, and returns only a short-lived KNAS session credential. The existing verifier remains the authority for token expiry, scope, replay protection, and canonical student identity.
 
-KNAS sends `{ action: 'moshroidsVerifySession', accessToken, audience: 'moshroids', roomId }` with `Authorization: Bearer <MOSHROIDS_SERVICE_SECRET>`. The secret must be matching 32 random bytes encoded as 64 lowercase hex characters, stored only in server secret bindings. Missing configuration fails closed. Redirects are forbidden, requests are bounded to four seconds, and failed consumption is never retried automatically.
+KNAS sends `{ action: 'moshroidsVerifySession', accessToken, audience: 'moshroids', roomId }` with `Authorization: Bearer <MOSHROIDS_SERVICE_SECRET>`. The secret must be matching 32 random bytes encoded as 64 lowercase hex characters, stored only in server secret bindings. Missing configuration fails closed. Redirects are forbidden, requests are bounded to 45 seconds, and failed consumption is never retried automatically.
 
 The authority is `moshroids_launch_grants` in the existing classroom D1 binding: SHA-256 hashes of 256-bit random tokens, identity snapshot, token ID, scope/room, issuing session and 60-second expiry. Atomic `DELETE ... RETURNING` permits exactly one consumer across processes. No process-local replay cache or Apps Script global lock substitutes for this database operation. The response is `{ ok: true, consumed: true, audience: 'moshroids', roomId, tokenId, issuedAt, expiresAt, testerAuthorized, student: { id, loginName, active: true } }`.
 
 After consuming the launch grant, KNAS creates a separate five-minute game session. The response to the browser contains only `{ ok: true, sessionToken, expiresAt }`; the raw launch token is not returned or logged. The WebSocket accepts `{ type: 'hello', resumeToken, roomId }` only. The server sends a rotated resume credential and verified `testerAuthorized` value with `authenticated`, followed by `welcome`. The browser keeps the credential in tab-scoped session storage so refresh/reconnect does not redeem the launch token again. LLP credentials and the service secret never go to KNAS through the browser.
 
-Reconnect uses `{ type: 'hello', resumeToken, roomId }`, not the consumed launch token. Server memory retains only the resume credential hash and verified identity, bounded to 256 sessions. Credentials rotate atomically on reconnect and are bound to room and browser Origin; duplicate credentials lose, duplicate-player launches retire the older resume credential, and reconnect never extends the five-minute absolute lifetime. Expired sockets close; restart invalidates all resume credentials. Fresh launch after expiry uses the existing classroom session, not a second login. Tester checks apply to new grants/consumes; an already established game session is a bounded capability lease, not instantaneous remote-toggle push revocation. Gameplay and reconnect do not call LLP/Sheets. No tester gameplay rules were introduced.
+Reconnect uses `{ type: 'hello', resumeToken, roomId }`, not the consumed launch token. Server memory retains only the resume credential hash and verified identity, bounded to 256 sessions. Credentials rotate atomically on reconnect and are bound to room and browser Origin; duplicate credentials lose, duplicate-player launches retire the older resume credential, and reconnect never extends the five-minute absolute lifetime. Expired sockets close; restart invalidates all resume credentials. The prepared client requests a fresh grant through its exact trusted portal opener
+90 seconds before expiry. Each renewal repeats existing authorization and obtains
+a new five-minute lease; reconnect alone never extends expiry. Closing the portal
+requires relaunch after the current lease expires. Tester checks apply to new grants/consumes; an already established game session is a bounded capability lease, not instantaneous remote-toggle push revocation. Gameplay and reconnect do not call LLP/Sheets. No tester gameplay rules were introduced.
 
 ## Test-only run
 
 Run `node --test server/test/*.test.mjs`. Standalone tests bind to loopback and use synthetic credentials. In the existing Spelling Snake/EDU repository, run `MOSHROIDS_SOURCE=/absolute/path/to/classroom-flap-moshroids npm test -- --disableConsoleIntercept lib/moshroids-integration.test.ts` for the actual classroom issuer/atomic consume/remote verifier plus 26 real WebSocket clients, replay and reconnect. The upstream LLP response and service network hop are test doubles; this is not WAN or production-capacity proof. `lib/moshroids-d1.test.ts` separately verifies 26 competing consumes against real local D1/Miniflare. The production entrypoint fails closed without `MOSHROIDS_ALLOWED_ORIGINS`, `MOSHROIDS_AUTH_VERIFY_URL`, and `MOSHROIDS_SERVICE_SECRET`.
 
-## Production prerequisites
+## Original infrastructure prerequisites (now provisioned)
 
 The outbound-only Astroids-KNAS connector is prepared separately in
 [`cloudflared/`](cloudflared/README.md). It reuses the existing private bridge;

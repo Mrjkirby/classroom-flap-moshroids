@@ -17,7 +17,7 @@ const web = http.createServer(async (req, res) => {
   try {
     res.setHeader('content-type', ({ '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html' })[extname(path)] || 'application/octet-stream');
     let body = await readFile(path);
-    if (pathname === '/knas-staging/bootstrap.js')
+    if (pathname === '/src/transport/config.js')
       body = body.toString().replace('wss://moshroids-staging.mrjkirby.workers.dev/ws', testWebSocketUrl);
     res.end(body);
   }
@@ -36,15 +36,14 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 try {
   for (const path of ['/', '/teams/', '/1vw/']) {
     const context = await browser.newContext();
-    await context.addInitScript(({ url }) => { globalThis.MOSHROIDS_TRANSPORT_CONFIG = {
-      provider: 'knas', websocketUrl: url,
-    requestLaunch: async roomId => ({ accessToken: 'ml1_' + crypto.randomUUID().replaceAll('-', '').padEnd(64, 'a').slice(0, 64),
-      audience: 'moshroids', expiresAt: new Date(Date.now() + 30000).toISOString(), roomId }),
-    }; }, { url: `ws://127.0.0.1:${address.port}/ws` });
     const page = await context.newPage(); const errors = [], firebase = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', req => { if (/firebase/.test(req.url())) firebase.push(req.url()); });
-    await page.goto(origin + path);
+    const roomId = path === '/teams/' ? 'classroom-teams' : path === '/1vw/' ? 'classroom-1vw' : 'classroom';
+    const token = 'ml1_' + crypto.randomUUID().replaceAll('-', '').padEnd(64, 'a');
+    const expiry = encodeURIComponent(new Date(Date.now() + 30000).toISOString());
+    await page.goto(`${origin}${path}#t=${token}&roomId=${roomId}&expiresAt=${expiry}`);
+    assert.equal(await page.evaluate(() => location.hash), '');
     await page.waitForFunction(() => document.getElementById('pilotLoginOverlay')?.classList.contains('hidden'));
     await page.keyboard.press('ArrowUp'); await page.keyboard.press('Space');
     const result = await page.evaluate(async () => {
@@ -63,6 +62,9 @@ try {
     assert.equal(result.first, true); assert.equal(result.second, false);
     assert.equal(result.published, true); assert.equal(result.claimed, true);
     assert.equal(firebase.length, 0, 'KNAS must not load Firebase SDK/auth/RTDB');
+    await page.reload();
+    await page.waitForFunction(() => document.getElementById('pilotLoginOverlay')?.classList.contains('hidden'));
+    assert.equal(firebase.length, 0, 'refresh must resume KNAS without loading Firebase');
     assert.deepEqual(errors, []);
     console.log(`${path}: real Chromium game boot, authoritative identity, shared claims; zero Firebase requests, zero page errors`);
     await context.close();
@@ -110,11 +112,20 @@ try {
   console.log('KNAS staging page: secure fragment consumed once, playable game shell, fixed local WSS, shared actions; zero Firebase requests, zero page errors');
   await stagingContext.close();
 
-  const context = await browser.newContext(); const page = await context.newPage();
-  await page.goto(origin);
-  await page.waitForFunction(async () => (await import('/src/transport/config.js')).transportConfig.provider === 'firebase');
-  await page.waitForFunction(async () => typeof (await import('/src/transport/index.js')).bindPilotLogin === 'function');
-  assert.equal(await page.locator('#pilotLoginForm').isVisible(), true);
-  console.log('Firebase default: existing adapter loads and pilot form remains; no live login/data writes attempted');
-  await context.close();
+  for (const path of ['/', '/teams/', '/1vw/', '/knas-staging/']) {
+    const context = await browser.newContext(); const page = await context.newPage();
+    const firebase = [], sockets = [];
+    page.on('request', req => { if (/firebase/.test(req.url())) firebase.push(req.url()); });
+    page.on('websocket', socket => sockets.push(socket.url()));
+    await page.goto(origin + path);
+    await page.waitForFunction(async () => (await import('/src/transport/config.js')).transportConfig.provider === 'knas');
+    assert.equal(await page.locator('#pilotLoginOverlay').isVisible(), true);
+    assert.equal(await page.locator('#pilotLoginForm').count(), 0);
+    const portal = page.getByRole('link', { name: 'OPEN CLASSROOM PORTAL' });
+    assert.equal(await portal.getAttribute('href'), 'https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site/');
+    assert.deepEqual(firebase, [], 'direct visits must not load Firebase');
+    assert.deepEqual(sockets, [], 'a direct visit cannot join without a classroom grant');
+    console.log(`${path}: direct visit requires classroom launch; zero Firebase requests or unauthenticated sockets`);
+    await context.close();
+  }
 } finally { await browser.close(); await realtime.close(); await new Promise(resolve => web.close(resolve)); }

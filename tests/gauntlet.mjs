@@ -14,7 +14,7 @@ test('Classic and 1VW routes share the engine but use explicit URLs', () => {
   assert.equal(modeForPath('/classroom-flap-moshroids/1vw/'), '1vw');
   assert.equal(modeForPath('/classroom-flap-moshroids/1vw/index.html'), '1vw');
   const html = readFileSync(new URL('../1vw/index.html', import.meta.url), 'utf8');
-  assert.match(html, /src="\.\.\/src\/game\.js"/);
+  assert.match(html, /src="\.\.\/src\/bootstrap\.js"/);
 });
 
 test('one first 40-gun claim wins the survivor slot and Classic is excluded', () => {

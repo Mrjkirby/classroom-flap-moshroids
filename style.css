@@ -122,7 +122,8 @@ body {
   box-shadow:0 0 0 2px rgba(114,230,221,.12);
 }
 
-#pilotEnterButton {
+#pilotEnterButton,
+.classroom-launch-link {
   padding:13px;
   border:1px solid var(--orange);
   background:transparent;
@@ -132,8 +133,19 @@ body {
   letter-spacing:.12em;
 }
 
-#pilotEnterButton:hover {
+#pilotEnterButton:hover,
+.classroom-launch-link:hover {
   background:rgba(255,135,95,.1);
+}
+
+.classroom-launch-link {
+  display:block;
+  text-decoration:none;
+}
+
+.classroom-launch-link:focus-visible {
+  outline:2px solid var(--cyan);
+  outline-offset:4px;
 }
 
 #pilotEnterButton:disabled {

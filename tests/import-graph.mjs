@@ -4,7 +4,7 @@ import { dirname, resolve, basename } from 'node:path';
 import { SourceTextModule, SyntheticModule } from 'node:vm';
 
 const root = resolve(import.meta.dirname, '..');
-const entry = resolve(root, 'src/game.js');
+const entry = resolve(root, 'src/bootstrap.js');
 const modules = new Map();
 const edges = new Map();
 const remoteNames = new Map();

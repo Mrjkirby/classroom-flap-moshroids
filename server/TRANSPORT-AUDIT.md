@@ -1,3 +1,8 @@
+> Historical audit: infrastructure below was subsequently provisioned.
+> See [current release status](../README.md#release-status--november-3-2026).
+> November 3: authenticated KNAS is healthy; LLP v68 login repair is active.
+> Primary cutover verification is recorded in the root README. Existing VPC routes are unchanged.
+
 # KNAS transport classification and release gate
 
 ## Firebase inventory inspected before implementation

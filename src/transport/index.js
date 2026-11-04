@@ -2,8 +2,8 @@
  * MOSHROIDS multiplayer boundary.
  *
  * Game orchestration imports this module, never a provider-specific transport.
- * Firebase remains the production default. The isolated KNAS staging page
- * selects the WebSocket adapter and obtains its grant from an LLP launch bridge.
+ * Published pages use the KNAS WebSocket adapter with the shared LLP launch
+ * bridge. The retained Firebase adapter requires explicit trusted configuration.
  */
 import { transportConfig } from './config.js';
 const adapter = transportConfig.provider === 'knas'
