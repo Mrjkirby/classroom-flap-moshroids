@@ -42,6 +42,7 @@ async function client(grant, resumeToken) {
       data.players.set(message.player.id, { ...data.players.get(message.player.id), ...message.player });
     if (message.type === 'playerLeft') data.players.delete(message.studentId);
     if (message.type === 'shared') {
+      if (message.channel === 'mrk') data.mrK = message.state;
       if (message.channel === 'boss') data.boss = message.state;
       if (message.channel === 'cannon') data.cannon = message;
       if (message.reset) data.shared.set(message.channel, new Map());
@@ -72,6 +73,13 @@ try {
       await delay(200);
       const asteroid = `epoch-${Math.floor(Date.now() / 1800000)}-field-0-asteroid-1`;
       assert.equal((await Promise.all(clients.map(c => c.request('asteroidClaim', { id: asteroid })))).filter(Boolean).length, 1);
+      const mrK = `epoch-${Math.floor(Date.now() / 1800000)}-mrk-0`;
+      assert.ok((await Promise.all(clients.slice(0,2).map((c,i) => c.request('mrkHit', { id: mrK, batchId:`load-hit-${i}-0000`, count:40 })))).every(Boolean));
+      await delay(50);
+      assert.ok(clients.every(c => c.mrK?.id === mrK && c.mrK.health === 920));
+      assert.ok((await Promise.all(clients.slice(2,25).map((c,i) => c.request('mrkHit', { id: mrK, batchId:`load-hit-${i+2}-0000`, count:40 })))).every(Boolean));
+      await delay(50);
+      assert.ok(clients.every(c => c.shared.get('asteroids').has(mrK)));
       assert.equal(await clients[0].request('dropPublish', { drops: [{ id: 'atomic-gun', x: 100, y: 34 }] }), true);
       assert.equal((await Promise.all(clients.map(c => c.request('dropClaim', { id: 'atomic-gun' })))).filter(Boolean).length, 1);
       if (roomId === 'classroom-teams') {

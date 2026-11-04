@@ -36,7 +36,7 @@ test('KNAS room records are unique and stay within their room', () => {
   const clients = rooms.map(() => new MrKShake());
   for (const client of clients) client.activate(now - 1);
   const id = 'epoch-10-mrk-0';
-  assert.equal(rooms[0].shared.apply(rooms[0].players.get('a'), 'asteroidClaim', { id }), true);
+  for (let i=0; i<25; i++) assert.equal(rooms[0].shared.apply(rooms[0].players.get('a'), 'mrkHit', { id, count:40, batchId:`shake-${String(i).padStart(4,'0')}` }), true);
   assert.equal(rooms[0].shared.apply(rooms[0].players.get('a'), 'asteroidClaim', { id }), false);
   assert.deepEqual(clients.map((client, index) => client.sync(rooms[index].shared.destroyed, now)), [[id], [], []]);
   assert.equal(rooms[1].shared.destroyed.has(id), false);

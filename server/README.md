@@ -15,7 +15,7 @@ Earlier infrastructure gates below are retained as deployment history.
 - `src/protocol.mjs`: bounded untrusted-message parsing and current room identifiers.
 - `src/match.mjs`: authoritative in-memory room/player/event state, duplicate protection, stale cleanup, and first-writer claims.
 - `src/shared-state.mjs`: sole shared claim/drop/boss authority, existing Teams and
-  gauntlet rules, chunked late-join snapshots. Player physics/score/gun-count
+  gauntlet rules, shared Mr. K health/hit deduplication, chunked late-join snapshots. Player physics/score/gun-count
   reports remain local, bounded and attributed only to the authenticated sender.
 
 The server intentionally persists no frame data or game-session credentials and starts with empty matches after a restart. Firebase remains the live transport and source of current room state.

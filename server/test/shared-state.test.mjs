@@ -16,7 +16,8 @@ function fixture(room = 'classroom') {
 test('shared claims are atomic, immutable, bounded and late-join replayable including MR K', () => {
   const { match, action, tick } = fixture();
   const id = 'epoch-10-mrk-0';
-  assert.equal(action('a', 'asteroidClaim', { id, destroyedBy: 'b' }), true);
+  assert.equal(action('a', 'asteroidClaim', { id, destroyedBy: 'b' }), false);
+  for (let i=0; i<25; i++) assert.equal(action('a', 'mrkHit', { id, batchId:`batch-${String(i).padStart(4,'0')}`, count:40 }), true);
   assert.equal(action('b', 'asteroidClaim', { id }), false);
   assert.equal(match.shared.destroyed.get(id).destroyedBy, 'a');
   assert.equal(action('a', 'asteroidClear'), false);

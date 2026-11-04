@@ -63,6 +63,14 @@ rollback points. No gameplay database migration or NAS rebuild is required.
   on its server.
 - `src/mrKShake.js`: one local 800 ms shake for each new shared Mr. K destruction
   ID. Room isolation and join baselines prevent cross-room effects/history replay.
+- `src/mrKRules.js`, `mrKHitQueue.js`, `mrKNetwork.js`, and `mrKBlast.js`:
+  KNAS owns one 1,000-hit Mr. K counter per room and field generation. Pilots'
+  own hits are sent in bounded idempotent batches; joining or reconnecting
+  receives the current count. A single room destruction record carries the
+  shared blast origin, and every connected browser creates a missile wave and
+  checks impacts against its own ship. Missile flight is locally simulated,
+  not a server-synchronized trajectory. Old destruction records are not
+  replayed as new waves on joining. The rock's motion uses shared room time.
 - `src/asteroidDirector.js`: deterministic shared-time asteroid generation;
   normal asteroid count doubles from ten per Mr. K generation.
 
@@ -115,9 +123,14 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.js CHROME_PATH=/absolute/pa
 
 ## Deployment
 
-GitHub Pages automatically publishes `main`; hold publication until required release checks pass. Publish only after tests pass. Server code already
-matches the running authenticated KNAS container (shared state, match and HTTP
-server hashes verified November 3); this client cutover requires no NAS rebuild.
+GitHub Pages automatically publishes `main`; hold publication until required release checks pass. Publish only after tests pass. The prior client cutover's server code
+matched the authenticated KNAS container on November 3; later server changes
+require a separately verified KNAS release.
 Do not redeploy shared Firebase, change runtime secrets, or migrate live data.
 After release, verify classroom login, displayed `ONLINE · KNAS`, three mode
 routes, reload and renewal, plus browser traffic without Firebase gameplay.
+
+The Mr. K shared-counter change requires the authenticated KNAS server update
+before publishing its corresponding Pages client. Restarting that service
+disconnects players and clears its transient rooms; check active connections
+and retain the previous image for rollback. This does not use or modify Firebase.

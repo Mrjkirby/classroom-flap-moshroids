@@ -192,6 +192,7 @@ export function createCollisionSystem({
 
   releaseMissiles,
   advanceAsteroidsFromMrK,
+  recordSharedMrKHits = null,
 
   updateScores,
   publishPlayerState
@@ -503,6 +504,7 @@ export function createCollisionSystem({
       return;
     }
 
+    let sharedHits = 0;
     for (
       let bulletIndex =
         world.bullets.length - 1;
@@ -529,6 +531,18 @@ export function createCollisionSystem({
         bulletIndex,
         1
       );
+
+      if (recordSharedMrKHits) {
+        // Teams reconstructs other pilots' volleys for visuals. Only the
+        // firing browser reports its own hits to the shared room counter.
+        if (bullet.owner === 'A') {
+          sharedHits++;
+          world.scores.A += 1;
+          updateScores();
+        }
+        addExplosion(bullet.x, bullet.y, bullet.owner === 'A' ? '#ff875f' : '#72e6dd', 2, 2);
+        continue;
+      }
 
       world.mrK.damage(
         1
@@ -596,6 +610,7 @@ export function createCollisionSystem({
        */
       break;
     }
+    if (sharedHits) recordSharedMrKHits(sharedHits);
   }
 
 

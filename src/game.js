@@ -7,6 +7,9 @@ import { createGunDropSystem } from './gunDropSystem.js';
 import { HomingMissile } from './homingMissile.js';
 import { MrKRock } from './mrKRock.js';
 import { MrKShake } from './mrKShake.js';
+import { syncMrKBlasts } from './mrKBlast.js';
+import { hasSharedMrK, getSharedMrK, queueMrKHits, updateMrKHitQueue } from './mrKNetwork.js';
+import { mrKPosition } from './mrKRules.js';
 import { SafeZones } from './safeZone.js';
 import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
@@ -368,10 +371,10 @@ function updateAsteroidRespawn(now) {
   if (previousEpoch !== asteroidDirector.currentEpoch ||
     previousGeneration !== asteroidDirector.fieldGeneration) {
     asteroidMultiplayer.resetField();
-    if (previousEpoch === asteroidDirector.currentEpoch &&
+    if (previousEpoch !== asteroidDirector.currentEpoch ||
       asteroidDirector.fieldGeneration > previousGeneration) {
       world.mrK = null;
-      world.mrKRespawnTimer = Math.max(
+      world.mrKRespawnTimer = asteroidDirector.fieldGeneration === 0 ? 0 : Math.max(
         0, 60 - (now - asteroidDirector.fieldSpawnTimestamp) / 1000);
     }
   }
@@ -530,8 +533,8 @@ function respawnPlayer(
    MR. K MISSILES
    ========================================================= */
 
-function releaseMissiles() {
-  if (!world.mrK) {
+function releaseMissiles(origin = world.mrK) {
+  if (!origin) {
     return;
   }
 
@@ -550,20 +553,20 @@ function releaseMissiles() {
 
     world.missiles.push(
       new HomingMissile(
-        world.mrK.x +
+        origin.x +
           Math.cos(
             angle
           ) *
-          world.mrK.radius,
+          (origin.radius ?? 105),
 
-        world.mrK.y +
+        origin.y +
           Math.sin(
             angle
           ) *
-          world.mrK.radius,
+          (origin.radius ?? 105),
 
         angle,
-        world.mrK.radius
+        origin.radius ?? 105
       )
     );
   }
@@ -838,6 +841,9 @@ const collisionSystem =
     releaseMissiles,
 
     advanceAsteroidsFromMrK,
+    recordSharedMrKHits: hasSharedMrK ? count => {
+      if (multiplayerJoined) queueMrKHits(`epoch-${asteroidDirector.currentEpoch}-mrk-${asteroidDirector.fieldGeneration}`, count);
+    } : null,
 
     updateScores,
 
@@ -1068,7 +1074,7 @@ function updateAsteroids(now) {
    ========================================================= */
 
 function updateMrK(
-  dt
+  dt, now
 ) {
   if (world.mrK) {
     world.mrK.update(
@@ -1076,6 +1082,14 @@ function updateMrK(
       worldWidth,
       worldHeight
     );
+
+    if (hasSharedMrK && multiplayerJoined) {
+      Object.assign(world.mrK, mrKPosition(now, asteroidDirector.fieldSpawnTimestamp,
+        asteroidDirector.fieldGeneration, worldWidth, worldHeight));
+      const id = `epoch-${asteroidDirector.currentEpoch}-mrk-${asteroidDirector.fieldGeneration}`;
+      const shared = getSharedMrK();
+      if (shared?.id === id) world.mrK.health = shared.health;
+    }
 
     return;
   }
@@ -1208,7 +1222,14 @@ function update(dt, sharedNow) {
 
   asteroidMultiplayer.sync();
 
-  mrKShake.sync(getDestroyedAsteroids(), sharedNow);
+  const destroyed = getDestroyedAsteroids();
+  syncMrKBlasts(mrKShake, destroyed, sharedNow, origin => {
+    if (!hasSharedMrK) return;
+    releaseMissiles(origin);
+    addRockExplosion(origin.x, origin.y);
+  });
+  if (hasSharedMrK && multiplayerJoined)
+    updateMrKHitQueue(`epoch-${asteroidDirector.currentEpoch}-mrk-${asteroidDirector.fieldGeneration}`);
 
   gunDropSystem.update();
 
@@ -1223,7 +1244,7 @@ function update(dt, sharedNow) {
   updateAsteroids(sharedNow);
 
   updateMrK(
-    dt
+    dt, sharedNow
   );
 
   updateMissiles(

@@ -5,6 +5,7 @@ import { WORLD_WIDTH, WORLD_HEIGHT } from '../../src/worldConfig.js';
 import { selectSurvivor, acceptCannonShot, finishGauntlet, resetGauntletState } from '../../src/gauntlet/rules.js';
 import { perimeterSlots } from '../../src/gauntlet/perimeterLayout.js';
 import { SHOT_LIFETIME } from '../../src/gauntlet/projectiles.js';
+import { MR_K_MAX_HEALTH, MR_K_EPOCH_MS, MR_K_RESPAWN_MS, mrKPosition } from '../../src/mrKRules.js';
 
 // One room owns shared resources. Local scores/physics remain player reports,
 // just as in Firebase; clients cannot select the reporting player's identity.
@@ -16,6 +17,7 @@ export class SharedState {
     this.dropIds = new Map();
     this.boss = { mode: '1vw', phase: 'normal', round: 0 };
     this.sequence = 0;
+    this.mrK = null;
   }
   emit(channel, entries) {
     this.match.broadcast({ type: 'shared', channel, entries, serverNow: this.match.clock() });
@@ -27,15 +29,53 @@ export class SharedState {
       for (let i = 0; i < entries.length; i += 100)
         socket.send({ type: 'shared', channel, entries: entries.slice(i, i + 100) });
     }
+    socket.send({ type: 'shared', channel: 'mrk', state: this.currentMrK(this.match.clock()) });
     const { cannons, ...state } = this.boss;
     socket.send({ type: 'shared', channel: 'boss', state, reset: true });
     for (const [uid, cannon] of Object.entries(cannons || {}))
       socket.send({ type: 'shared', channel: 'cannon', uid, cannon });
   }
+  currentMrK(now) {
+    const epoch = Math.floor(now / MR_K_EPOCH_MS);
+    let generation = 0, fieldSpawn = epoch * MR_K_EPOCH_MS;
+    while (this.destroyed.has(`epoch-${epoch}-mrk-${generation}`)) {
+      fieldSpawn = this.destroyed.get(`epoch-${epoch}-mrk-${generation}`).destroyedAt;
+      generation++;
+    }
+    const id = `epoch-${epoch}-mrk-${generation}`;
+    if (!this.mrK || this.mrK.id !== id)
+      this.mrK = { id, health: MR_K_MAX_HEALTH, fieldSpawn, generation, batches: new Set() };
+    return { id, health: this.mrK.health, fieldSpawn, generation };
+  }
   apply(player, action, data = {}) {
     const now = this.match.clock();
     const id = safeText(data.id, 120);
+    if (action === 'mrkHit') {
+      const current = this.currentMrK(now);
+      const batchId = safeText(data.batchId, 80);
+      const count = data.count;
+      if (id !== current.id || !/^[A-Za-z0-9_-]{8,80}$/.test(batchId) ||
+          !Number.isInteger(count) || count < 1 || count > 40 ||
+          (current.generation > 0 && now < current.fieldSpawn + MR_K_RESPAWN_MS)) return false;
+      const key = `${player.id}:${batchId}`;
+      if (this.mrK.batches.has(key)) return true;
+      if (this.mrK.batches.size >= 4096) return false;
+      if (count >= this.mrK.health && this.destroyed.size >= 20000) return false;
+      this.mrK.batches.add(key);
+      this.mrK.health = Math.max(0, this.mrK.health - count);
+      this.match.broadcast({ type: 'shared', channel: 'mrk', state: { ...current, health: this.mrK.health } });
+      if (this.mrK.health === 0) {
+        const position = mrKPosition(now, current.fieldSpawn, current.generation, WORLD_WIDTH, WORLD_HEIGHT);
+        const record = { asteroidId: id, destroyedBy: player.id, destroyedAt: now, ...position };
+        this.destroyed.set(id, record);
+        this.emit('asteroids', [[id, record]]);
+      }
+      return true;
+    }
     if (action === 'asteroidClaim') {
+      // Mr. K can only be destroyed by the shared hit counter. A legacy
+      // client must not bypass the counter with a local 1,000-hit claim.
+      if (/^epoch-\d+-mrk-\d+$/.test(id)) return false;
       // Keep complete current + previous epoch history, never evict active
       // tombstones to make room (that would award a duplicate claim).
       const epoch = /^epoch-(\d+)-/.exec(id);
