@@ -12,13 +12,19 @@ checks while allowing renamed Aspen reporting columns. Activation used the
 already authorized deployment-owner browser account; no URL or access settings
 changed. The backend suite passed 224 tests.
 
-Primary KNAS cutover is undergoing live verification after 126 MOSHROIDS tests,
+Primary KNAS client `3b579c1` is deployed; public file readback matches source.
+Live Student LLP and Snake login passed with the supplied test account.
+Full live game launch and renewal remain unverified because the browser launch
+control did not activate during automation while the Mac reported locked.
+Do not describe that as completed live gameplay verification.
+
+Release checks passed: 126 MOSHROIDS tests,
 190 Snake tests, TypeScript and production build passed. Synthetic 26-client
 checks passed in each mode with zero duplicate claims, identity crossovers or
 state divergence. Local Chrome boot and reload passed in Classic and Teams;
 1VW boot passed. These checks are not a live class of authenticated students.
 
-Snake Site version 37 (`855ab8f`) supplies three mode choices and fresh grants
+Snake Site version 38 (`ec2301f`) is deployed and supplies three mode choices and fresh grants
 for session renewal. Previous Pages release `9e21018` and Snake version 36 remain
 rollback points. No gameplay database migration or NAS rebuild is required.
 
