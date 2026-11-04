@@ -1,4 +1,5 @@
 import { asteroidDirector, BASE_ASTEROID_COUNT } from './asteroidDirector.js';
+import { createAsteroidFieldCache } from './asteroidFieldCache.js';
 import { createAsteroidMultiplayerSystem } from './asteroidMultiplayer.js';
 import { Bullet } from './bullet.js';
 import { Camera } from './camera.js';
@@ -8,8 +9,10 @@ import { HomingMissile } from './homingMissile.js';
 import { MrKRock } from './mrKRock.js';
 import { MrKShake } from './mrKShake.js';
 import { syncMrKBlasts } from './mrKBlast.js';
-import { hasSharedMrK, getSharedMrK, queueMrKHits, updateMrKHitQueue } from './mrKNetwork.js';
+import { hasSharedMrK, getSharedMrK, queueMrKHits, updateMrKHitQueue,
+  getSharedMissiles, getSharedMissileHits, shootSharedMissile, acknowledgeSharedMissileHit } from './mrKNetwork.js';
 import { mrKPosition } from './mrKRules.js';
+import { createSharedMissiles } from './sharedMissiles.js';
 import { SafeZones } from './safeZone.js';
 import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
@@ -330,9 +333,7 @@ const asteroidMultiplayer =
     addExplosion
   });
 
-let lastFieldRecords = null;
-let lastFieldEpoch = -1;
-let lastFieldSlot = -1;
+const asteroidFieldCache = createAsteroidFieldCache();
 
 
 /* =========================================================
@@ -359,14 +360,13 @@ function updateAsteroidRespawn(now) {
   const records = getDestroyedAsteroids();
   const epoch = asteroidDirector.getEpochNumber(now);
   const slot = asteroidDirector.getRespawnSlot(now);
-  if (records === lastFieldRecords && epoch === lastFieldEpoch &&
-    slot === lastFieldSlot) return;
+  if (!asteroidFieldCache.needsUpdate(records, epoch, slot, now)) return;
 
   const previousGeneration = asteroidDirector.fieldGeneration;
   const previousEpoch = asteroidDirector.currentEpoch;
   world.asteroids = asteroidDirector.reconstructField(
     worldWidth, worldHeight, now, records
-  ).filter(asteroid => !asteroidMultiplayer.isPending(asteroid.id));
+  ).filter(asteroid => !records.has(asteroid.id) && !asteroidMultiplayer.isPending(asteroid.id));
 
   if (previousEpoch !== asteroidDirector.currentEpoch ||
     previousGeneration !== asteroidDirector.fieldGeneration) {
@@ -378,9 +378,7 @@ function updateAsteroidRespawn(now) {
         0, 60 - (now - asteroidDirector.fieldSpawnTimestamp) / 1000);
     }
   }
-  lastFieldRecords = records;
-  lastFieldEpoch = epoch;
-  lastFieldSlot = asteroidDirector.getRespawnSlot(now);
+  asteroidFieldCache.remember(records, epoch, asteroidDirector.getRespawnSlot(now), now);
 }
 
 
@@ -810,6 +808,15 @@ const gunDropSystem =
    COLLISION SYSTEM
    ========================================================= */
 
+const sharedMissileViews = createSharedMissiles({
+  shoot: shootSharedMissile,
+  acknowledge: acknowledgeSharedMissileHit,
+  onHit: hit => {
+    if (playerDestroyed('A', 'mr-k-missile')) addExplosion(hit.x, hit.y, '#ff875f', 22);
+  },
+  onRemoved: missile => addExplosion(missile.x, missile.y, '#ffdb69', 7, 3)
+});
+
 const collisionSystem =
   createCollisionSystem({
     world,
@@ -844,6 +851,8 @@ const collisionSystem =
     recordSharedMrKHits: hasSharedMrK ? count => {
       if (multiplayerJoined) queueMrKHits(`epoch-${asteroidDirector.currentEpoch}-mrk-${asteroidDirector.fieldGeneration}`, count);
     } : null,
+    shootSharedMissile: hasSharedMrK ? sharedMissileViews.shot : null,
+    serverMissileImpacts: hasSharedMrK,
 
     updateScores,
 
@@ -884,9 +893,7 @@ function reset() {
   weaponSystem.reset();
 
   asteroidDirector.reset(sharedClock.now());
-  lastFieldRecords = null;
-  lastFieldEpoch = -1;
-  lastFieldSlot = -1;
+  asteroidFieldCache.reset();
 
   replaceAsteroidField(
     BASE_ASTEROID_COUNT
@@ -1113,6 +1120,10 @@ function updateMrK(
 function updateMissiles(
   dt
 ) {
+  if (hasSharedMrK && multiplayerJoined) {
+    world.missiles = sharedMissileViews.update(getSharedMissiles(), getSharedMissileHits(), dt, worldWidth, worldHeight);
+    return;
+  }
   world.missiles.forEach(
     (missile) =>
       missile.update(
@@ -1225,7 +1236,6 @@ function update(dt, sharedNow) {
   const destroyed = getDestroyedAsteroids();
   syncMrKBlasts(mrKShake, destroyed, sharedNow, origin => {
     if (!hasSharedMrK) return;
-    releaseMissiles(origin);
     addRockExplosion(origin.x, origin.y);
   });
   if (hasSharedMrK && multiplayerJoined)

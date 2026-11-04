@@ -24,7 +24,7 @@ async function client(grant, resumeToken) {
     resumeToken = (await response.json()).sessionToken;
   }
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`); sockets.add(socket);
-  const data = { socket, messages: [], pending: new Map(), sequence: 0, players: new Map(), shared: new Map(), intentional: false };
+  const data = { socket, messages: [], missileSnapshots: [], missileArrivals: new Map(), pending: new Map(), sequence: 0, players: new Map(), shared: new Map(), intentional: false };
   data.send = value => { const text = JSON.stringify(value); bytesOut += Buffer.byteLength(text); sent++; socket.send(text); };
   data.request = (action, body = {}) => new Promise((resolve, reject) => {
     const requestId = String(++data.sequence), at = performance.now();
@@ -43,6 +43,11 @@ async function client(grant, resumeToken) {
     if (message.type === 'playerLeft') data.players.delete(message.studentId);
     if (message.type === 'shared') {
       if (message.channel === 'mrk') data.mrK = message.state;
+      if (message.channel === 'missiles') {
+        data.missiles = message; data.missileSnapshots.push(message);
+        data.missileArrivals.set(message.serverNow, Date.now());
+        if (data.missileSnapshots.length > 60) data.missileArrivals.delete(data.missileSnapshots.shift().serverNow);
+      }
       if (message.channel === 'boss') data.boss = message.state;
       if (message.channel === 'cannon') data.cannon = message;
       if (message.reset) data.shared.set(message.channel, new Map());
@@ -69,6 +74,7 @@ try {
         x: roomId === 'classroom-teams' ? 34 : 100 + i, y: 34, angle: 0.5, velocityX: 1, velocityY: 2,
         visible: true, guns: roomId === 'classroom-1vw' ? 40 : 4, name: 'forged', testerAuthorized: true } });
     }), 90);
+    let missileSnapshotDeliveryMs = 0, missileShotDeliveryMs = 0;
     try {
       await delay(200);
       const asteroid = `epoch-${Math.floor(Date.now() / 1800000)}-field-0-asteroid-1`;
@@ -80,6 +86,25 @@ try {
       assert.ok((await Promise.all(clients.slice(2,25).map((c,i) => c.request('mrkHit', { id: mrK, batchId:`load-hit-${i+2}-0000`, count:40 })))).every(Boolean));
       await delay(50);
       assert.ok(clients.every(c => c.shared.get('asteroids').has(mrK)));
+      await delay(250);
+      const wave = clients[0].missileSnapshots.findLast(message => message.missiles.length > 0);
+      assert.ok(wave, 'the server broadcasts its active wave');
+      const waitBegan = performance.now();
+      while (clients.some(c => !c.missileSnapshots.some(message => message.serverNow === wave.serverNow)) &&
+             performance.now() - waitBegan < 5000) await delay(25);
+      for (const c of clients) {
+        const sameTick = c.missileSnapshots.find(message => message.serverNow === wave.serverNow);
+        assert.deepEqual(sameTick?.missiles, wave.missiles, 'each client receives the same authoritative missile state');
+      }
+      missileSnapshotDeliveryMs = Math.max(...clients.map(c => c.missileArrivals.get(wave.serverNow) - wave.serverNow));
+      const missileId = wave.missiles[0][0];
+      const claims = await Promise.all(clients.slice(0, 2).map(c => c.request('missileShot', { id: missileId })));
+      assert.equal(claims.filter(Boolean).length, 1, 'a shot removes the shared missile exactly once');
+      const shotAt = performance.now();
+      while (clients.some(c => c.missiles?.missiles.some(item => item[0] === missileId)) &&
+             performance.now() - shotAt < 5000) await delay(25);
+      assert.ok(clients.every(c => c.missiles && !c.missiles.missiles.some(item => item[0] === missileId)));
+      missileShotDeliveryMs = performance.now() - shotAt;
       assert.equal(await clients[0].request('dropPublish', { drops: [{ id: 'atomic-gun', x: 100, y: 34 }] }), true);
       assert.equal((await Promise.all(clients.map(c => c.request('dropClaim', { id: 'atomic-gun' })))).filter(Boolean).length, 1);
       if (roomId === 'classroom-teams') {
@@ -110,7 +135,8 @@ try {
     const at = Date.now(); clients.forEach(c => c.send({ type: 'heartbeat', sentAt: at })); await delay(100);
     const clocks = clients.map(c => c.messages.findLast(m => m.type === 'heartbeat').serverNow);
     reports.push({ roomId, connections: 26, identityCrossover: 0, duplicateAsteroidClaims: 0, duplicateGunClaims: 0,
-      stateDivergence: 0, clockSpreadMs: Math.max(...clocks) - Math.min(...clocks), reconnect: 'pass' });
+      stateDivergence: 0, clockSpreadMs: Math.max(...clocks) - Math.min(...clocks),
+      missileSnapshotDeliveryMs, missileShotDeliveryMs: Math.round(missileShotDeliveryMs), reconnect: 'pass' });
     await Promise.all(clients.map(c => c.close()));
   }
   const seconds = (performance.now() - start) / 1000;

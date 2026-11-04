@@ -1,5 +1,5 @@
-// The existing destruction record is the one room-wide event. Each active
-// client creates its local missile simulation once, from the same origin.
+// The existing destruction record drives the local shake and rock explosion.
+// KNAS independently owns the shared missile wave.
 export function syncMrKBlasts(shake, records, now, onBlast) {
   const ids = shake.sync(records, now);
   for (const id of ids) {

@@ -6,6 +6,7 @@ import { selectSurvivor, acceptCannonShot, finishGauntlet, resetGauntletState } 
 import { perimeterSlots } from '../../src/gauntlet/perimeterLayout.js';
 import { SHOT_LIFETIME } from '../../src/gauntlet/projectiles.js';
 import { MR_K_MAX_HEALTH, MR_K_EPOCH_MS, MR_K_RESPAWN_MS, mrKPosition } from '../../src/mrKRules.js';
+import { MrKMissiles } from './mr-k-missiles.mjs';
 
 // One room owns shared resources. Local scores/physics remain player reports,
 // just as in Firebase; clients cannot select the reporting player's identity.
@@ -18,11 +19,13 @@ export class SharedState {
     this.boss = { mode: '1vw', phase: 'normal', round: 0 };
     this.sequence = 0;
     this.mrK = null;
+    this.fieldRevision = 0;
+    this.missiles = new MrKMissiles(match);
   }
   emit(channel, entries) {
     this.match.broadcast({ type: 'shared', channel, entries, serverNow: this.match.clock() });
   }
-  snapshot(socket) {
+  snapshot(socket, playerId = '') {
     for (const [channel, map] of [['asteroids', this.destroyed], ['drops', this.drops]]) {
       const entries = [...map];
       socket.send({ type: 'shared', channel, reset: true, entries: [] });
@@ -30,6 +33,7 @@ export class SharedState {
         socket.send({ type: 'shared', channel, entries: entries.slice(i, i + 100) });
     }
     socket.send({ type: 'shared', channel: 'mrk', state: this.currentMrK(this.match.clock()) });
+    this.missiles.snapshot(socket, playerId, this.match.clock());
     const { cannons, ...state } = this.boss;
     socket.send({ type: 'shared', channel: 'boss', state, reset: true });
     for (const [uid, cannon] of Object.entries(cannons || {}))
@@ -68,7 +72,9 @@ export class SharedState {
         const position = mrKPosition(now, current.fieldSpawn, current.generation, WORLD_WIDTH, WORLD_HEIGHT);
         const record = { asteroidId: id, destroyedBy: player.id, destroyedAt: now, ...position };
         this.destroyed.set(id, record);
+        this.fieldRevision++;
         this.emit('asteroids', [[id, record]]);
+        this.missiles.launch(id, position, now);
       }
       return true;
     }
@@ -85,13 +91,16 @@ export class SharedState {
       if ((!projectile && (!epoch || Math.abs(Number(epoch[1]) - Math.floor(now / 1800000)) > 1)) ||
           this.destroyed.has(id) || this.destroyed.size >= 20000) return false;
       const record = { asteroidId: id, destroyedBy: player.id, destroyedAt: now };
-      this.destroyed.set(id, record); this.emit('asteroids', [[id, record]]); return true;
+      this.destroyed.set(id, record); this.fieldRevision++; this.emit('asteroids', [[id, record]]); return true;
     }
     if (action === 'asteroidClear') {
       if (!this.match.clients.get(player.id)?.testerAuthorized) return false;
       this.destroyed.clear();
+      this.fieldRevision++;
       this.match.broadcast({ type: 'shared', channel: 'asteroids', reset: true, entries: [] }); return true;
     }
+    if (action === 'missileShot') return this.missiles.shot(player, id, now);
+    if (action === 'missileHitAck') return this.missiles.acknowledge(player.id, id);
     if (action === 'dropPublish') {
       const drops = data.drops;
       if (!Array.isArray(drops) || !drops.length || drops.length > 40 || this.dropIds.size + drops.length > 4096) return false;
@@ -162,6 +171,7 @@ export class SharedState {
     const old = [];
     for (const [id, record] of this.destroyed) if (Number(/^epoch-(\d+)-/.exec(id)?.[1]) < epoch - 1 ||
       (id.startsWith('1vw-shot-') && now - record.destroyedAt > SHOT_LIFETIME)) { this.destroyed.delete(id); old.push([id, null]); }
+    if (old.length) this.fieldRevision++;
     for (let i = 0; i < old.length; i += 100) this.emit('asteroids', old.slice(i, i + 100));
     if (this.match.mode === '1vw') this.apply({ id: '' }, 'survivorDisconnected');
   }

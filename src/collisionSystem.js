@@ -193,6 +193,8 @@ export function createCollisionSystem({
   releaseMissiles,
   advanceAsteroidsFromMrK,
   recordSharedMrKHits = null,
+  shootSharedMissile = null,
+  serverMissileImpacts = false,
 
   updateScores,
   publishPlayerState
@@ -392,6 +394,8 @@ export function createCollisionSystem({
           1
         );
 
+        if (shootSharedMissile && bullet.owner !== 'A') continue;
+
         const missile =
           world.missiles.splice(
             missileIndex,
@@ -405,6 +409,8 @@ export function createCollisionSystem({
           7,
           3
         );
+
+        if (shootSharedMissile) shootSharedMissile(missile.id);
 
         continue;
       }
@@ -683,6 +689,7 @@ export function createCollisionSystem({
      ======================================================= */
 
   function resolveMissileCollisions() {
+    if (serverMissileImpacts) return;
     for (
       let missileIndex =
         world.missiles.length - 1;

@@ -5,11 +5,10 @@ import { MrKShake } from '../src/mrKShake.js';
 import { syncMrKBlasts } from '../src/mrKBlast.js';
 import { createMrKHitQueue } from '../src/mrKHitQueue.js';
 import { createCollisionSystem } from '../src/collisionSystem.js';
-import { HomingMissile } from '../src/homingMissile.js';
 import { mrKPosition } from '../src/mrKRules.js';
 
 for (const room of ['classroom', 'classroom-teams', 'classroom-1vw']) {
-  test(`${room}: combined hits share health and launch missiles on every connected client`, () => {
+  test(`${room}: combined hits share health and launch one authoritative wave`, () => {
     let now=18_001_000;
     const match=new Match(room,{clock:()=>now}), messages=new Map();
     for(const id of ['a','b','c']) {
@@ -30,6 +29,7 @@ for (const room of ['classroom', 'classroom-teams', 'classroom-1vw']) {
     assert.equal(event.destroyedBy,'c');
     assert.deepEqual({x:event.x,y:event.y},mrKPosition(now,18_000_000,0,2880,1620));
     assert.equal(match.shared.destroyed.size,1);
+    assert.equal(match.shared.missiles.active.size,20);
     assert.equal(hit('a','too-late-001',1),false);
     assert.equal(match.shared.apply(match.players.get('a'),'asteroidClaim',{id:key}),false);
     const other=new Match(room==='classroom'?'classroom-teams':'classroom',{clock:()=>now});
@@ -37,20 +37,12 @@ for (const room of ['classroom', 'classroom-teams', 'classroom-1vw']) {
 
     for (const id of ['a','b','c']) {
       const shake=new MrKShake();shake.activate(now-1);
-      const missiles=[];
-      const launch=origin=>{ for(let i=0;i<20;i++) missiles.push(new HomingMissile(origin.x,origin.y,i*Math.PI/10,origin.radius)); };
-      syncMrKBlasts(shake,match.shared.destroyed,now,launch);
-      syncMrKBlasts(shake,match.shared.destroyed,now,launch);
-      assert.equal(missiles.length,20,`${id} receives one wave`);
-      const ship={owner:'A',visible:true,x:missiles[0].x,y:missiles[0].y,radius:18};
-      const world={ships:[ship],missiles:[missiles[0]],asteroids:[],bullets:[],mrK:null,scores:{A:0}};
-      let reason='';
-      const collision=createCollisionSystem({world,getWorldWidth:()=>2880,getWorldHeight:()=>1620,
-        destroyAsteroid:()=>false,isAsteroidDestructionPending:()=>false,
-        playerDestroyed:(_owner,r)=>{reason=r;return true;},addExplosion(){},addRockExplosion(){},
-        releaseMissiles(){},advanceAsteroidsFromMrK(){},updateScores(){},publishPlayerState(){}});
-      collision.resolveMissileCollisions();
-      assert.equal(reason,'mr-k-missile',`${id}'s own ship can be destroyed`);
+      let explosions = 0;
+      syncMrKBlasts(shake,match.shared.destroyed,now,()=>explosions++);
+      syncMrKBlasts(shake,match.shared.destroyed,now,()=>explosions++);
+      assert.equal(explosions,1,`${id} receives one visual blast`);
+      const snapshot=messages.get(id).filter(value=>value.channel==='missiles').at(-1);
+      assert.equal(snapshot.missiles.length,20,`${id} receives the same server wave`);
     }
     const newPlayer=new MrKShake();newPlayer.activate(now+1);let replayed=0;
     syncMrKBlasts(newPlayer,match.shared.destroyed,now+2,()=>replayed++);

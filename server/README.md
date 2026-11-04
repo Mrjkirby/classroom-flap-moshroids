@@ -15,10 +15,15 @@ Earlier infrastructure gates below are retained as deployment history.
 - `src/protocol.mjs`: bounded untrusted-message parsing and current room identifiers.
 - `src/match.mjs`: authoritative in-memory room/player/event state, duplicate protection, stale cleanup, and first-writer claims.
 - `src/shared-state.mjs`: sole shared claim/drop/boss authority, existing Teams and
-  gauntlet rules, shared Mr. K health/hit deduplication, chunked late-join snapshots. Player physics/score/gun-count
-  reports remain local, bounded and attributed only to the authenticated sender.
+  gauntlet rules, shared Mr. K health/hit deduplication, chunked late-join snapshots.
+- `src/mr-k-missiles.mjs`, `src/missile-field.mjs`: room-owned Mr. K missile
+  simulation, nearest-target selection, ship impacts, safe zones and the same
+  deterministic asteroid/1VW field used by clients. Snapshots are sent about
+  ten times per second while missiles are active. Player movement, gun counts,
+  scores and bullet-hit reports remain local and are attributed to the
+  authenticated sender; the server resolves each reported missile shot once.
 
-The server intentionally persists no frame data or game-session credentials and starts with empty matches after a restart. Firebase remains the live transport and source of current room state.
+The server intentionally persists no frame data or game-session credentials and starts with empty matches after a restart. KNAS is the production room authority; the retained Firebase adapter is legacy-only.
 
 ## Classroom token contract
 

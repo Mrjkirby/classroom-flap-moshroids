@@ -26,9 +26,11 @@ const web = http.createServer(async (req, res) => {
 await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${web.address().port}`;
 const used = new Set();
+const syntheticIdentities = new Map();
 const realtime = createMoshroidsServer({ allowedOrigins: [origin], authenticate: async ({ accessToken }) => {
   if (!/^ml1_[a-f0-9]{64}$/.test(accessToken) || used.has(accessToken)) throw new Error('Invalid synthetic test grant');
-  used.add(accessToken); return { studentId: 'browser-test', displayName: 'Browser Test' };
+  used.add(accessToken); const id = syntheticIdentities.get(accessToken) || 'browser-test';
+  return { studentId: id, displayName: id === 'browser-test' ? 'Browser Test' : id };
 } });
 const address = await realtime.listen();
 testWebSocketUrl = `ws://127.0.0.1:${address.port}/ws`;
@@ -51,8 +53,9 @@ try {
       const asteroids = await import('/src/asteroidNetwork.js');
       const drops = await import('/src/gunDropMultiplayer.js');
       const epoch = Math.floor(Date.now() / 1800000);
-      const first = await asteroids.destroySharedAsteroid(`epoch-${epoch}-mrk-0`);
-      const second = await asteroids.destroySharedAsteroid(`epoch-${epoch}-mrk-0`);
+      const id = `epoch-${epoch}-field-0-browser-${crypto.randomUUID()}`;
+      const first = await asteroids.destroySharedAsteroid(id);
+      const second = await asteroids.destroySharedAsteroid(id);
       const published = await drops.publishGunDrops([{ id: 'browser-gun', x: 100, y: 100 }]);
       const claimed = await drops.claimGunDrop('browser-gun');
       return { identity: net.getLocalIdentity(), first, second, published, claimed,
@@ -69,6 +72,55 @@ try {
     console.log(`${path}: real Chromium game boot, authoritative identity, shared claims; zero Firebase requests, zero page errors`);
     await context.close();
   }
+  // Three real browser game clients, using only isolated synthetic identities.
+  // The server is a local fixture; this never joins or modifies the live room.
+  const multiplayerContexts = [], multiplayerPages = [], multiplayerErrors = [];
+  for (let i = 0; i < 3; i++) {
+    const token = 'ml1_' + crypto.randomUUID().replaceAll('-', '').padEnd(64, String(i));
+    syntheticIdentities.set(token, `browser-${i}`);
+    const context = await browser.newContext(); multiplayerContexts.push(context);
+    const page = await context.newPage(); multiplayerPages.push(page);
+    page.on('pageerror', error => multiplayerErrors.push(error.message));
+    const expiry = encodeURIComponent(new Date(Date.now() + 30000).toISOString());
+    await page.goto(`${origin}/#t=${token}&roomId=classroom&expiresAt=${expiry}`);
+    await page.waitForFunction(() => document.getElementById('pilotLoginOverlay')?.classList.contains('hidden'));
+    await page.evaluate(async () => {
+      window.testMissileSnapshots = [];
+      const store = await import('/src/transport/knas-store.js');
+      store.subscribe(message => {
+        if (message.type === 'shared' && message.channel === 'missiles') window.testMissileSnapshots.push(message);
+      });
+    });
+  }
+  const mrK = `epoch-${Math.floor(Date.now() / 1800000)}-mrk-0`;
+  for (let i = 0; i < 25; i++) {
+    const accepted = await multiplayerPages[i % 2].evaluate(async ({ id, i }) => {
+      const { request } = await import('/src/transport/knas-store.js');
+      return request('mrkHit', { id, batchId: `browser-hit-${String(i).padStart(4, '0')}`, count: 40 });
+    }, { id: mrK, i });
+    assert.equal(accepted, true);
+  }
+  for (const page of multiplayerPages)
+    await page.waitForFunction(async () => (await import('/src/transport/knas-store.js')).store.missiles?.missiles.length > 0);
+  const snapshots = await Promise.all(multiplayerPages.map(page => page.evaluate(() => window.testMissileSnapshots)));
+  const common = snapshots[0].find(snapshot => snapshot.missiles.length &&
+    snapshots.every(list => list.some(item => item.serverNow === snapshot.serverNow &&
+      JSON.stringify(item.missiles) === JSON.stringify(snapshot.missiles))));
+  assert.ok(common, 'all three game clients received an identical server missile snapshot');
+  const match = realtime.registry.get('classroom');
+  const pilot = match.players.get('browser-0');
+  const missile = [...match.shared.missiles.active.values()][0];
+  assert.ok(pilot && missile);
+  missile.x = pilot.x; missile.y = pilot.y; missile.outbound = false;
+  await multiplayerPages[0].waitForFunction(() => document.getElementById('wormholeOverlay')?.classList.contains('visible'));
+  await multiplayerPages[1].waitForFunction(async () => (await import('/src/transport/knas-store.js'))
+    .store.players.get('browser-0')?.visible === false);
+  await multiplayerPages[2].reload();
+  await multiplayerPages[2].waitForFunction(() => document.getElementById('pilotLoginOverlay')?.classList.contains('hidden'));
+  await multiplayerPages[2].waitForFunction(async () => (await import('/src/transport/knas-store.js')).store.missiles?.missiles.length > 0);
+  assert.deepEqual(multiplayerErrors, []);
+  console.log('Three local Chromium clients: shared missile snapshot, server ship impact, peer visibility and active-wave reconnect passed.');
+  for (const context of multiplayerContexts) await context.close();
   const stagingContext = await browser.newContext();
   const stagingPage = await stagingContext.newPage();
   const stagingErrors = [], stagingFirebase = [], websocketUrls = [];

@@ -207,12 +207,14 @@ export function createMoshroidsServer({
     connections.add(connection);
   });
   const cleanupTimer = setInterval(() => { registry.cleanup(); sessions.cleanup(); }, 5_000).unref();
+  const missileTimer = setInterval(() => registry.tick(), 50).unref();
   return {
     server,
     registry,
     async listen(port = 0, host = '127.0.0.1') { await new Promise(resolve => server.listen(port, host, resolve)); return server.address(); },
     async close() {
       clearInterval(cleanupTimer);
+      clearInterval(missileTimer);
       sessions.clear();
       for (const connection of connections) connection.close(1001, 'Server is stopping.');
       for (const socket of rawSockets) socket.destroy();

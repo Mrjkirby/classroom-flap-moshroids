@@ -67,12 +67,19 @@ rollback points. No gameplay database migration or NAS rebuild is required.
   KNAS owns one 1,000-hit Mr. K counter per room and field generation. Pilots'
   own hits are sent in bounded idempotent batches; joining or reconnecting
   receives the current count. A single room destruction record carries the
-  shared blast origin, and every connected browser creates a missile wave and
-  checks impacts against its own ship. Missile flight is locally simulated,
-  not a server-synchronized trajectory. Old destruction records are not
-  replayed as new waves on joining. The rock's motion uses shared room time.
-- `src/asteroidDirector.js`: deterministic shared-time asteroid generation;
-  normal asteroid count doubles from ten per Mr. K generation.
+  shared blast origin. `server/src/mr-k-missiles.mjs` owns the missile wave,
+  target selection and ship impacts, with 20 Hz simulation and approximately
+  10 Hz room snapshots; `server/src/missile-field.mjs` reuses the same asteroid
+  and safe-zone rules. `src/sharedMissiles.js` smoothly renders the shared state
+  and reports the local pilot's missile shots. Hits are delivered once to the
+  affected player and retained briefly for reconnect. Active missiles are
+  included in late-join snapshots. Ship movement remains client-reported;
+  missile collision uses bounded position prediction, so network delay can
+  still affect a close encounter. The rock's motion uses shared room time.
+- `src/asteroidDirector.js`, `asteroidFieldCache.js`: deterministic shared-time
+  asteroid generation and prompt reconsideration of server events that arrive
+  slightly ahead of the client's estimated clock; normal asteroid count doubles
+  from ten per Mr. K generation.
 
 ## Login and services
 
@@ -115,7 +122,17 @@ The full suite covers shared drops, simultaneous claims, no-upgrade death,
 respawn, late join, Mr. K deduplication/room isolation, all three game modes,
 security, reconnect, renewal and import validity. The capacity command uses 26
 synthetic WebSocket clients in each room and reports traffic/latency. Neither
-proves a live class of authenticated students. Optional browser regression:
+proves a live class of authenticated students. The browser regression also
+uses three local synthetic clients to check shared missile snapshots, an actual
+game UI hit, peer visibility and recovery of an active wave after reload.
+
+An isolated KNAS loopback run on November 4, 2026 tested the three rooms in
+sequence with 26 simulated players each. It recorded no unexpected disconnects,
+approximately 1.8 MB/s aggregate server egress and 34 ms p95 action latency.
+Those figures describe that synthetic run, not simultaneous use of all rooms,
+school Wi-Fi, the public tunnel or authenticated classroom play.
+
+Run the optional browser regression with:
 
 ```sh
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.js CHROME_PATH=/absolute/path/to/chrome node tools/verify-transport-browser.mjs
@@ -130,7 +147,7 @@ Do not redeploy shared Firebase, change runtime secrets, or migrate live data.
 After release, verify classroom login, displayed `ONLINE · KNAS`, three mode
 routes, reload and renewal, plus browser traffic without Firebase gameplay.
 
-The Mr. K shared-counter change requires the authenticated KNAS server update
+The Mr. K shared-counter and shared-missile changes require the authenticated KNAS server update
 before publishing its corresponding Pages client. Restarting that service
 disconnects players and clears its transient rooms; check active connections
 and retain the previous image for rollback. This does not use or modify Firebase.

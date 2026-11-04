@@ -4,7 +4,8 @@ import { ROOM_ID } from '../gameMode.js';
 import { sharedClock } from '../sharedClock.js';
 import { reportTransportDiagnostic } from './diagnostics.js';
 
-export const store = { players: new Map(), destroyed: new Map(), drops: new Map(), boss: null, mrK: null, identity: null, connected: false };
+export const store = { players: new Map(), destroyed: new Map(), drops: new Map(), boss: null, mrK: null,
+  missiles: null, missileHits: new Map(), identity: null, connected: false };
 const listeners = new Set();
 export const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
 const emit = value => listeners.forEach(listener => listener(value));
@@ -29,8 +30,13 @@ export function connect() {
       if (value.type === 'playerState' || value.type === 'playerJoined')
         store.players.set(value.player.id, { ...store.players.get(value.player.id), ...value.player });
       if (value.type === 'playerLeft') store.players.delete(value.studentId);
+      if (value.type === 'missileHitSnapshot')
+        store.missileHits = new Map((value.hits || []).map(hit => [hit.id, hit]));
+      if (value.type === 'missileHit' && value.hit?.playerId === store.identity?.uid)
+        store.missileHits.set(value.hit.id, value.hit);
       if (value.type === 'shared') {
         if (value.channel === 'mrk') store.mrK = value.state;
+        else if (value.channel === 'missiles') store.missiles = value;
         else if (value.channel === 'boss') store.boss = { ...value.state,
           cannons: value.reset ? {} : store.boss?.cannons || {} };
         else if (value.channel === 'cannon') store.boss = { ...store.boss,
@@ -53,4 +59,5 @@ export function connect() {
 }
 export const request = (action, data) => connection?.request(action, data) || Promise.resolve(false);
 export const send = value => connection?.send(value) || false;
-export function disconnect() { connection?.stop(); connection = null; store.connected = false; store.identity = null; store.mrK = null; store.players.clear(); }
+export function disconnect() { connection?.stop(); connection = null; store.connected = false; store.identity = null;
+  store.mrK = null; store.missiles = null; store.missileHits.clear(); store.players.clear(); }

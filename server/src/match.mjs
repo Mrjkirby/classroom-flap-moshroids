@@ -14,6 +14,8 @@ export class Match {
     this.log = log;
     this.clients = new Map();
     this.players = new Map();
+    this.stateSeen = new Set();
+    this.invulnerableUntil = new Map();
     this.events = [];
     this.shared = new SharedState(this);
   }
@@ -41,7 +43,7 @@ export class Match {
     socket.send({ type: 'welcome', studentId: session.studentId, ...this.snapshot() });
     for (const current of this.players.values()) if (current.teamShots?.length)
       socket.send({ type: 'playerState', player: { ...current }, serverNow: this.clock() });
-    this.shared.snapshot(socket);
+    this.shared.snapshot(socket, session.studentId);
     socket.send({ type: 'ready', serverNow: this.clock() });
     this.broadcast({ type: 'playerJoined', player: { ...player }, serverNow: this.clock() }, session.studentId);
   }
@@ -51,6 +53,8 @@ export class Match {
     if (!client || (socket && client.socket !== socket)) return;
     this.clients.delete(studentId);
     this.players.delete(studentId);
+    this.stateSeen.delete(studentId);
+    this.invulnerableUntil.delete(studentId);
     this.broadcast({ type: 'playerLeft', studentId, serverNow: this.clock() });
   }
 
@@ -80,6 +84,8 @@ export class Match {
     if (++client.stateCount > 15) return client.socket.send({ type: 'error', error: 'State rate limit exceeded.' });
     const state = normalizeState(value);
     if (!state) return client.socket.send({ type: 'error', error: 'Invalid player state.' });
+    if (!player.visible && state.visible) this.invulnerableUntil.set(player.id, time + 1500);
+    this.stateSeen.add(player.id);
     Object.assign(player, state, { updatedAt: time });
     this.broadcast({ type: 'playerState', player: { id: player.id, ...state, updatedAt: time }, serverNow: time }, player.id);
   }
@@ -124,5 +130,6 @@ export class MatchRegistry {
     return this.matches.get(roomId);
   }
   cleanup() { for (const match of this.matches.values()) match.cleanup(); }
+  tick() { for (const match of this.matches.values()) match.shared.missiles.tick(match.clock()); }
   status() { return { rooms: this.matches.size, connections: [...this.matches.values()].reduce((sum, match) => sum + match.clients.size, 0) }; }
 }
