@@ -12,12 +12,19 @@ checks while allowing renamed Aspen reporting columns. Activation used the
 already authorized deployment-owner browser account; no URL or access settings
 changed. The backend suite passed 224 tests.
 
-Primary KNAS client `3b579c1` is deployed; public file readback matches source.
+Primary KNAS client `3b579c1` and renewal fix `7c47e9a` are deployed; public file
+readback matches source.
 Live Student LLP and Snake login passed with the supplied test account;
 Snake login was reconfirmed November 4.
-Full live game launch and renewal remain unverified because the browser launch
-control did not activate during automation while the Mac reported locked.
-Do not describe that as completed live gameplay verification.
+Live programmatic checks using that account passed launch issuance, redemption,
+authenticated KNAS WebSocket connection and rotated-token reconnect in Classic,
+Teams and 1VW. Automatic renewal through the existing login issuer also passed;
+the connection remained active beyond its original five-minute lease.
+KNAS's private authenticated health confirmed the test connection. Public
+`/health` still describes the separate standby service by design.
+Rendered browser game launch and multi-student gameplay remain unverified:
+the Mac reported locked and the browser launch control did not activate.
+Do not describe API checks as completed visual multiplayer verification.
 
 Release checks passed: 127 MOSHROIDS tests,
 190 Snake tests, TypeScript and production build passed. Synthetic 26-client
