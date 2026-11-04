@@ -58,7 +58,9 @@ rollback points. No gameplay database migration or NAS rebuild is required.
 - `src/weaponSystem.js`, `gunDropSystem.js`, `gunDropMultiplayer.js`: one drop per
   earned gun on death; the base gun remains on respawn. Actual upgrades are gun
   count, not a separate inventory. Room drops expire after ten seconds; claims
-  are atomic. Firebase uses server-aligned time; KNAS stamps time on its server.
+  are atomic. KNAS sends compact batches so a fully upgraded ship's drops fit
+  the server message limit. Firebase uses server-aligned time; KNAS stamps time
+  on its server.
 - `src/mrKShake.js`: one local 800 ms shake for each new shared Mr. K destruction
   ID. Room isolation and join baselines prevent cross-room effects/history replay.
 - `src/asteroidDirector.js`: deterministic shared-time asteroid generation;

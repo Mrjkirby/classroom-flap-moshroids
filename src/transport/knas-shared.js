@@ -14,7 +14,15 @@ export const isAsteroidDestroyed = id => store.destroyed.has(String(id));
 export const destroySharedAsteroid = id => request('asteroidClaim', { id });
 export const clearDestroyedAsteroids = () => request('asteroidClear');
 export const getGunDrops = () => store.drops;
-export const publishGunDrops = drops => request('dropPublish', { drops });
+// KNAS supplies ownership, radius and timestamps. Keep batches small enough
+// for its 8 KB message limit even with long, multibyte student IDs.
+export async function publishGunDrops(drops) {
+  const compact = drops.map(({ id, x, y }) => ({ id, x, y }));
+  const batches = [];
+  for (let i = 0; i < compact.length; i += 10)
+    batches.push(request('dropPublish', { drops: compact.slice(i, i + 10) }));
+  return (await Promise.all(batches)).every(Boolean);
+}
 export const claimGunDrop = id => request('dropClaim', { id });
 export const removeExpiredGunDrop = id => request('dropExpire', { id });
 export const getGauntletState = () => store.boss;

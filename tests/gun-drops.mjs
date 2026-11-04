@@ -2,6 +2,37 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { WeaponSystem } from '../src/weaponSystem.js';
 import { Match } from '../server/src/match.mjs';
+import { parseMessage } from '../server/src/protocol.mjs';
+import { readFile } from 'node:fs/promises';
+import { SourceTextModule, SyntheticModule } from 'node:vm';
+
+test('actual KNAS publication fits the server limit at maximum guns and identity length', async () => {
+  const wires = [];
+  const storeModule = new SyntheticModule(['store', 'request'], function () {
+    this.setExport('store', {});
+    this.setExport('request', (action, data) => {
+      wires.push(JSON.stringify({ type: 'action', action, data, requestId: '123456789' }));
+      return Promise.resolve(true);
+    });
+  });
+  const adapter = new SourceTextModule(await readFile(new URL('../src/transport/knas-shared.js', import.meta.url), 'utf8'));
+  await adapter.link(() => storeModule);
+  await adapter.evaluate();
+  const weapons = new WeaponSystem();
+  weapons.setGunCount(40);
+  const drops = weapons.createDrops(1200, 1200, '界'.repeat(96));
+  assert.equal(drops.length, 39);
+  assert.equal(await adapter.namespace.publishGunDrops(drops), true);
+  const match = new Match('classroom');
+  match.join({ studentId: 'owner', displayName: 'Owner' }, { send() {}, close() {} });
+  assert.equal(wires.length, 4);
+  for (const wire of wires) {
+    const parsed = parseMessage(wire);
+    assert.equal(parsed.ok, true, `KNAS rejected ${Buffer.byteLength(wire)} bytes`);
+    assert.equal(match.shared.apply(match.players.get('owner'), parsed.value.action, parsed.value.data), true);
+  }
+  assert.equal(match.shared.drops.size, 39);
+});
 
 test('death drops earned guns near the ship, not the respawn starter', () => {
   const owner = new WeaponSystem();
