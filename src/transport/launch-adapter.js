@@ -5,7 +5,9 @@ export const LLP_LAUNCHER_ORIGIN =
   'https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site';
 
 const ALLOWED_ROOMS = new Set(['classroom', 'classroom-teams', 'classroom-1vw']);
-const RESPONSE_TIMEOUT_MS = 15_000;
+// The classroom issuer may spend up to 60 seconds rechecking an LLP session.
+// Leave time for that check and the response within the 90-second renewal lead.
+const RESPONSE_TIMEOUT_MS = 75_000;
 
 export function createOpenerLaunchAdapter({
   windowRef = globalThis.window,

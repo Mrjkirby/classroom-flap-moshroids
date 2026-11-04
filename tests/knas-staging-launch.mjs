@@ -80,6 +80,34 @@ test('shared launcher does not accept a grant from a mismatched request id', asy
   assert.equal(harness.listeners.size, 0);
 });
 
+test('shared launcher waits for a slow classroom recheck and still bounds missing replies', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  const harness = fakeWindow({ respond: ({ message, opener, listeners }) => {
+    setTimeout(() => dispatch(listeners, { source: opener, origin: LLP_LAUNCHER_ORIGIN, data: {
+      type: 'moshroids:launch-grant', requestId: message.requestId, grant: grant('classroom'),
+    } }), 60_000);
+  } });
+  const adapter = createOpenerLaunchAdapter({ windowRef: harness.windowRef });
+  let settled = false;
+  const pending = adapter.requestLaunch('classroom').then(
+    value => { settled = true; return value; },
+    error => { settled = true; throw error; },
+  );
+  t.mock.timers.tick(59_999);
+  await Promise.resolve();
+  assert.equal(settled, false, 'renewal must remain pending during the LLP recheck');
+  t.mock.timers.tick(1);
+  assert.equal((await pending).roomId, 'classroom');
+  assert.equal(harness.listeners.size, 0);
+
+  const silent = fakeWindow();
+  const timeout = assert.rejects(createOpenerLaunchAdapter({ windowRef: silent.windowRef })
+    .requestLaunch('classroom'), /did not respond/);
+  t.mock.timers.tick(75_000);
+  await timeout;
+  assert.equal(silent.listeners.size, 0);
+});
+
 test('one-time launch fragment is removed immediately and accepted only once', async () => {
   const accessToken = grant('classroom').accessToken;
   const expiresAt = new Date(Date.now() + 30000).toISOString();

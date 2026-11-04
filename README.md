@@ -1,10 +1,10 @@
 # Classroom Flap Moshroids
 
-MOSHROIDS is a multiplayer classroom Asteroids game. The prepared primary client
+MOSHROIDS is a multiplayer classroom Asteroids game. The deployed primary client
 uses the existing LLP/Snake login and KNAS realtime server. GitHub Pages continues
 to serve the same game URLs. No student PIN is sent to KNAS.
 
-## Release status — November 3, 2026
+## Release status — November 4, 2026
 
 The shared LLP login repair is active on the existing deployment as version 68
 (source `9ca6275`). It preserves the roster and all identity/access-control
@@ -13,12 +13,13 @@ already authorized deployment-owner browser account; no URL or access settings
 changed. The backend suite passed 224 tests.
 
 Primary KNAS client `3b579c1` is deployed; public file readback matches source.
-Live Student LLP and Snake login passed with the supplied test account.
+Live Student LLP and Snake login passed with the supplied test account;
+Snake login was reconfirmed November 4.
 Full live game launch and renewal remain unverified because the browser launch
 control did not activate during automation while the Mac reported locked.
 Do not describe that as completed live gameplay verification.
 
-Release checks passed: 126 MOSHROIDS tests,
+Release checks passed: 127 MOSHROIDS tests,
 190 Snake tests, TypeScript and production build passed. Synthetic 26-client
 checks passed in each mode with zero duplicate claims, identity crossovers or
 state divergence. Local Chrome boot and reload passed in Classic and Teams;
@@ -41,6 +42,8 @@ rollback points. No gameplay database migration or NAS rebuild is required.
 - `src/transport/connection.js`: short sessions, WebSocket, bounded reconnect,
   acknowledgements and renewal 90 seconds before expiry. Only a fresh authorized
   grant can create another five-minute lease. Old socket events are ignored.
+  Portal replies allow 75 seconds because an LLP session recheck can take 60
+  seconds; a regression covers delayed replies and missing-reply cleanup.
 - `src/transport/knas-store.js`, `knas-player.js`, `knas-shared.js`: replicated
   room state and adapters for existing gameplay interfaces.
 - `server/src/`: existing in-memory room authority, one-use grant verification,
