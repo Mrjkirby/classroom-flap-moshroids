@@ -51,6 +51,6 @@ for (const offset of [-3_600_000, -2000, 2000, 3_600_000]) {
     resumed.send({ type: 'heartbeat', sentAt: Date.now() });
     assert.equal((await closed).code, 4003, 'server must reject the session at its original expiry');
     assert.equal(resumed.resumeToken, null);
-    assert.equal(resumed.retry, undefined);
+    assert.ok(resumed.retry, 'an established player may request a new authorized lease');
   });
 }

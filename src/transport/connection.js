@@ -139,7 +139,7 @@ export class RealtimeConnection {
       this.onStatus(this.ready, 'Session renewal unavailable. Reopen MOSHROIDS from your classroom portal.');
     } finally {
       this.renewing = false;
-      if (!this.stopped && this.socket === socket && !this.ready && this.resumeToken)
+      if (!this.stopped && this.socket === socket && !this.ready && (this.resumeToken || this.wasReady))
         this.scheduleReconnect();
     }
   }
@@ -184,6 +184,7 @@ export class RealtimeConnection {
       return;
     }
     const previous = this.socket;
+    if (previous) this.onStatus(false, 'Reconnecting to your shared game…');
     this.previousSocket?.close();
     this.previousSocket = previous;
     this.socket = socket;
@@ -211,7 +212,7 @@ export class RealtimeConnection {
       }
       if (value.type === 'ready') {
         this.previousSocket?.close(); this.previousSocket = null;
-        this.ready = true; this.attempts = 0; this.onStatus(true, 'Connected');
+        this.ready = true; this.wasReady = true; this.attempts = 0; this.onStatus(true, 'Connected');
         clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => this.send({ type: 'heartbeat', sentAt: Date.now() }), 5000);
         this.send({ type: 'heartbeat', sentAt: Date.now() });
@@ -242,7 +243,9 @@ export class RealtimeConnection {
       }
       if (event.code === 4003) {
         this.clearSession();
-        this.onStatus(false, 'Game session expired or rejected. Reopen MOSHROIDS from your classroom portal.');
+        this.onStatus(false, this.wasReady ? 'Reconnecting to your shared game…' :
+          'Game session expired or rejected. Reopen MOSHROIDS from your classroom portal.');
+        if (this.wasReady && !this.renewing) this.scheduleReconnect();
         return;
       }
       // Never replay state-changing actions after an ambiguous disconnect.

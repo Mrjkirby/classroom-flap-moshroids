@@ -48,7 +48,9 @@ rollback points. No gameplay database migration or NAS rebuild is required.
   Legacy Firebase adapters remain available only to explicit trusted configuration.
 - `src/transport/connection.js`: short sessions, WebSocket, bounded reconnect,
   acknowledgements and renewal 90 seconds before expiry. Only a fresh authorized
-  grant can create another five-minute lease. Old socket events are ignored.
+  grant can create another five-minute lease. Old socket events are ignored. If
+  an established lease expires, the existing portal can issue a fresh grant to
+  rejoin the same room; an unavailable portal requires reopening the game.
   Portal replies allow 75 seconds because an LLP session recheck can take 60
   seconds; a regression covers delayed replies and missing-reply cleanup.
 - `src/transport/knas-store.js`, `knas-player.js`, `knas-shared.js`: replicated
@@ -87,6 +89,9 @@ Sign into https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site/ with the existi
 classroom account and choose a MOSHROIDS mode. Keep that portal tab open for
 renewal. A direct game visit offers the same portal; it cannot invent a player.
 Closing the portal means relaunch is required when the current lease expires.
+If the connection drops, gameplay pauses with a reconnect notice instead of
+continuing as a separate local game. Shared room snapshots restore the field
+when the connection returns, and an interrupted spelling challenge resumes.
 
 | URL | Room |
 | --- | --- |

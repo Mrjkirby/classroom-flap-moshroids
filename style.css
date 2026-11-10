@@ -259,6 +259,21 @@ body.network-offline .status-dot {
   box-shadow:0 0 10px var(--orange);
 }
 
+.connection-notice:not([hidden]) {
+  position:fixed;
+  inset:0;
+  z-index:90;
+  display:grid;
+  align-content:center;
+  justify-items:center;
+  padding:24px;
+  text-align:center;
+  background:rgba(2,5,6,.94);
+  color:var(--ink);
+}
+
+.connection-notice a { color:var(--cyan); }
+
 
 /* =========================================================
    SCOREBOARD

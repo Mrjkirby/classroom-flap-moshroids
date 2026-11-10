@@ -17,6 +17,16 @@ function syncPlayers() {
 export function bindPilotLogin(getInitialState, onJoined) {
   let joined = false;
   const element = id => document.getElementById(id);
+  const notice = document.createElement('section');
+  notice.className = 'connection-notice';
+  notice.hidden = true;
+  notice.setAttribute('role', 'status');
+  const message = document.createElement('p');
+  const link = document.createElement('a');
+  link.href = 'https://spelling-snake-mr-kirby.mr-kirby.chatgpt.site/';
+  link.textContent = 'Return to the classroom portal';
+  notice.append(message, link);
+  document.querySelector('.game-shell').append(notice);
   // No alternate pilot selection: the server welcome supplies the name.
   if (element('pilotLoginForm')) element('pilotLoginForm').hidden = true;
   subscribe(value => {
@@ -24,6 +34,8 @@ export function bindPilotLogin(getInitialState, onJoined) {
       document.body.classList.toggle('network-offline', !value.connected);
       if (element('networkStatus')) element('networkStatus').textContent = value.connected ? 'ONLINE · KNAS' : 'OFFLINE';
       if (element('pilotLoginStatus')) element('pilotLoginStatus').textContent = value.detail;
+      notice.hidden = value.connected || !joined;
+      message.textContent = `${value.detail} Your game is paused until it reconnects.`;
     }
     if (['welcome', 'playerJoined', 'playerState', 'playerLeft'].includes(value.type)) syncPlayers();
     if (value.type === 'ready') {

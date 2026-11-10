@@ -37,6 +37,7 @@ import {
   bindPilotLogin,
   getLocalIdentity,
   getRemotePlayers,
+  isMultiplayerConnected,
   publishLocalState,
   publishTeamChange,
   publishTeamVolley,
@@ -1506,16 +1507,17 @@ function frame(
   lastTime =
     now;
 
-  if (hasStarted) {
+  if (hasStarted && multiplayerJoined && isMultiplayerConnected()) {
     update(
       dt,
       sharedClock.now()
     );
+  } else if (multiplayerJoined && !isMultiplayerConnected()) {
+    // Do not simulate a private copy of the room while disconnected.
+    keys.clear();
   }
 
-  spelling.update(
-    now
-  );
+  if (!multiplayerJoined || isMultiplayerConnected()) spelling.update(now);
 
   draw();
 

@@ -95,10 +95,44 @@ for (const reason of ['closed portal', 'wrong room']) {
     socket.close(4003);
     assert.equal(h.connection.resumeToken, null);
     assert.equal(h.connection.ready, false);
-    assert.equal(h.connection.retry, undefined);
+    assert.ok(h.connection.retry, 'an established game tries a fresh authorized launch');
     assert.equal(h.saved.size, 0);
   });
 }
+
+test('an expired established session obtains a fresh grant and rejoins the same room', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const h = await harness(t);
+  const previous = h.connection.socket;
+  previous.close(4003);
+  assert.equal(h.connection.ready, false);
+  assert.equal(h.connection.resumeToken, null);
+  t.mock.timers.tick(1000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.counts(), { issued: 2, redeemed: 2 });
+  assert.notEqual(h.connection.socket, previous);
+  h.authenticate(h.connection.socket);
+  assert.equal(h.connection.ready, true);
+  assert.equal(h.connection.socket.sent[0].roomId, 'classroom');
+});
+
+test('expiry during a failed renewal still retries from the existing classroom portal', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  let rejectRenewal;
+  const h = await harness(t, { issue: count => count === 1 ? Promise.resolve(grant(1)) :
+    count === 2 ? new Promise((_resolve, reject) => { rejectRenewal = reject; }) : Promise.resolve(grant(2)) });
+  const renewal = h.connection.renewSession();
+  h.connection.socket.close(4003);
+  assert.equal(h.connection.retry, undefined, 'the in-flight renewal finishes first');
+  rejectRenewal(new Error('temporary issuer failure'));
+  await renewal;
+  assert.ok(h.connection.retry);
+  t.mock.timers.tick(1000);
+  await new Promise(resolve => setImmediate(resolve));
+  h.authenticate(h.connection.socket);
+  assert.equal(h.connection.ready, true);
+  assert.deepEqual(h.counts(), { issued: 3, redeemed: 2 });
+});
 
 test('stopping during portal renewal does not redeem or reopen a socket', async t => {
   let resolveGrant;
