@@ -107,7 +107,7 @@ export class SharedState {
       const ids = drops.map(drop => safeText(drop?.id, 120));
       if (ids.some(value => !value || this.dropIds.has(value)) || new Set(ids).size !== ids.length) return false;
       const entries = drops.map((drop, i) => [ids[i], { id: ids[i], ownerUid: player.id,
-        x: finiteNumber(drop.x), y: finiteNumber(drop.y), radius: 8, createdAt: now, expiresAt: now + 10000 }]);
+        x: finiteNumber(drop.x), y: finiteNumber(drop.y), radius: 8, createdAt: now, expiresAt: now + 12000 }]);
       for (const [key, value] of entries) { this.drops.set(key, value); this.dropIds.set(key, now + 60000); }
       this.emit('drops', entries); return true;
     }

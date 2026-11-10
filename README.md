@@ -56,8 +56,8 @@ rollback points. No gameplay database migration or NAS rebuild is required.
 - `server/src/`: existing in-memory room authority, one-use grant verification,
   rotating reconnect credentials, atomic claims, snapshots and shared events.
 - `src/weaponSystem.js`, `gunDropSystem.js`, `gunDropMultiplayer.js`: one drop per
-  earned gun on death; the base gun remains on respawn. Actual upgrades are gun
-  count, not a separate inventory. Room drops expire after ten seconds; claims
+  equipped gun on death; respawn grants the base gun again. Actual upgrades are gun
+  count, not a separate inventory. Room drops expire after twelve seconds; claims
   are atomic. KNAS sends compact batches so a fully upgraded ship's drops fit
   the server message limit. Firebase uses server-aligned time; KNAS stamps time
   on its server.

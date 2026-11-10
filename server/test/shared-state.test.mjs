@@ -35,8 +35,10 @@ test('gun claims resolve once, cannot overwrite or resurrect a claimed drop, exp
   assert.equal(action('b', 'dropClaim', { id: 'g' }), true);
   assert.equal(action('a', 'dropClaim', { id: 'g' }), false);
   assert.equal(action('a', 'dropPublish', { drops: [{ id: 'g' }] }), false);
-  action('a', 'dropPublish', { drops: [{ id: 'h' }] }); tick(10001);
-  assert.equal(action('b', 'dropClaim', { id: 'h' }), false);
+  action('a', 'dropPublish', { drops: [{ id: 'h' }, { id: 'i' }] }); tick(11999);
+  assert.equal(action('b', 'dropClaim', { id: 'h' }), true, 'pickup remains available before twelve seconds');
+  tick(1);
+  assert.equal(action('b', 'dropClaim', { id: 'i' }), false, 'pickup expires at twelve seconds');
   match.shared.cleanup(); assert.equal(match.shared.drops.size, 0);
 });
 test('Teams uses server player ownership, base contact and stamped volleys', () => {

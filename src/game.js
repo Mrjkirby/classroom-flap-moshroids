@@ -471,15 +471,9 @@ function playerDestroyed(
 
   teams.reset(ship);
 
-  if (gauntlet.active()) {
-    // The 1VW round resets after spelling; do not seed the next race
-    // with the Survivor's forty guns.
-    weaponSystem.setGunCount(1);
-  } else {
-    gunDropSystem
-      .dropLocalGuns(ship)
-      .catch(error => { console.error('Gun drop failed:', error); });
-  }
+  gunDropSystem
+    .dropLocalGuns(ship)
+    .catch(error => { console.error('Gun drop failed:', error); });
 
   suspendPlayerControls(
     playerId

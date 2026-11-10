@@ -1,7 +1,7 @@
 const STARTING_GUNS = 1;
 const MAX_GUNS = 40;
 
-const DROP_LIFETIME = 10;
+const DROP_LIFETIME = 12;
 const PICKUP_RADIUS = 25;
 const DROP_RADIUS = 8;
 
@@ -108,8 +108,8 @@ export class WeaponSystem {
      ======================================================= */
 
   /*
-   * The starting gun is granted on every spawn. Only guns
-   * earned beyond it become independent pickups.
+   * Every equipped gun becomes an independent pickup. Respawn
+   * separately grants the starting gun again.
    */
   createDrops(
     x,
@@ -122,7 +122,7 @@ export class WeaponSystem {
       Math.max(
         0,
         Math.floor(
-          (Number(gunCount) || 0) - STARTING_GUNS
+          Math.min(MAX_GUNS, Number(gunCount) || 0)
         )
       );
 

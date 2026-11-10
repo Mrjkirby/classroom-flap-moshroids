@@ -48,7 +48,7 @@ test('Firebase publishes and claims drops on shared time despite a slow device c
   t.after(() => api.stopGunDropListener());
   assert.equal(await api.publishGunDrops([{ id: 'g', x: 50, y: 60 }]), true);
   assert.equal(records.get('g').createdAt, serverNow);
-  assert.equal(records.get('g').expiresAt, serverNow + 10_000);
+  assert.equal(records.get('g').expiresAt, serverNow + 12_000);
   assert.equal(api.getGunDrops().has('g'), true, 'another client sees the active drop');
   user = { uid: 'b' };
   assert.equal(await api.claimGunDrop('g'), true);
@@ -56,5 +56,5 @@ test('Firebase publishes and claims drops on shared time despite a slow device c
   assert.equal(api.getGunDrops().has('g'), false);
   user = { uid: 'c' };
   assert.equal(await api.claimGunDrop('g'), false, 'a second claimant cannot collect it');
-  assert.ok(serverNow > wallNow + 10_000, 'fixture covers clock skew beyond the drop lifetime');
+  assert.ok(serverNow > wallNow + 12_000, 'fixture covers clock skew beyond the drop lifetime');
 });

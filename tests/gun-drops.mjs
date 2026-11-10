@@ -21,7 +21,7 @@ test('actual KNAS publication fits the server limit at maximum guns and identity
   const weapons = new WeaponSystem();
   weapons.setGunCount(40);
   const drops = weapons.createDrops(1200, 1200, '界'.repeat(96));
-  assert.equal(drops.length, 39);
+  assert.equal(drops.length, 40);
   assert.equal(await adapter.namespace.publishGunDrops(drops), true);
   const match = new Match('classroom');
   match.join({ studentId: 'owner', displayName: 'Owner' }, { send() {}, close() {} });
@@ -31,20 +31,66 @@ test('actual KNAS publication fits the server limit at maximum guns and identity
     assert.equal(parsed.ok, true, `KNAS rejected ${Buffer.byteLength(wire)} bytes`);
     assert.equal(match.shared.apply(match.players.get('owner'), parsed.value.action, parsed.value.data), true);
   }
-  assert.equal(match.shared.drops.size, 39);
+  assert.equal(match.shared.drops.size, 40);
 });
 
-test('death drops earned guns near the ship, not the respawn starter', () => {
+test('death drops every equipped gun near the ship, and respawn keeps its starter', () => {
   const owner = new WeaponSystem();
   owner.setGunCount(11);
   const drops = owner.createDrops(100, 200, 'a');
-  assert.equal(drops.length, 10);
-  assert.equal(new Set(drops.map(drop => drop.id)).size, 10);
+  assert.equal(drops.length, 11);
+  assert.equal(new Set(drops.map(drop => drop.id)).size, 11);
   assert.ok(drops.every(drop => drop.ownerUid === 'a' &&
     Math.hypot(drop.x - 100, drop.y - 200) <= 50));
   owner.setGunCount(1);
   assert.equal(owner.getGunCount(), 1, 'respawn starts with only the base gun');
-  assert.equal(owner.createDrops(100, 200, 'a').length, 0);
+  const starterDrop = owner.createDrops(100, 200, 'a', 1, 1000);
+  assert.equal(starterDrop.length, 1, 'a ship with only its starting gun still drops one');
+  assert.equal(starterDrop[0].expiresAt, 13000);
+  owner.setGunCount(39);
+  assert.equal(owner.confirmPickup(starterDrop[0].id).gunCount, 40);
+  assert.equal(owner.addGun().after, 40, 'gun count remains capped at forty');
+});
+
+test('death and pickup run through the game coordinator and shared room authority', async () => {
+  const match = new Match('classroom', { clock: Date.now });
+  for (const id of ['a', 'b', 'c'])
+    match.join({ studentId: id, displayName: id }, { send() {}, close() {} });
+  let player = 'a';
+  const weapons = new WeaponSystem();
+  const shared = {
+    getGunDrops: () => match.shared.drops,
+    publishGunDrops: async drops => match.shared.apply(match.players.get(player), 'dropPublish', { drops }),
+    claimGunDrop: async id => match.shared.apply(match.players.get(player), 'dropClaim', { id }),
+    removeExpiredGunDrop: async id => match.shared.apply(match.players.get(player), 'dropExpire', { id }),
+  };
+  const module = (values) => new SyntheticModule(Object.keys(values), function () {
+    for (const [key, value] of Object.entries(values)) this.setExport(key, value);
+  });
+  const imports = {
+    './weaponSystem.js': module({ weaponSystem: weapons }),
+    './gunDropMultiplayer.js': module(shared),
+    './transport/index.js': module({ getLocalIdentity: () => ({ uid: player }) }),
+    './sharedClock.js': module({ sharedClock: { now: Date.now } }),
+  };
+  const coordinator = new SourceTextModule(await readFile(new URL('../src/gunDropSystem.js', import.meta.url), 'utf8'));
+  await coordinator.link(specifier => imports[specifier]);
+  await coordinator.evaluate();
+  const ship = { owner: 'A', x: 100, y: 200, visible: false, state: 'DEAD', radius: 15 };
+  let published = 0;
+  const system = coordinator.namespace.createGunDropSystem({ world: { ships: [ship] },
+    isMultiplayerJoined: () => true, addExplosion() {}, publishPlayerState: async () => { published++; return true; } });
+  assert.equal(await system.dropLocalGuns(ship), true);
+  assert.equal(weapons.getGunCount(), 1);
+  assert.equal(match.shared.drops.size, 1, 'starter gun is shared on death');
+  const id = [...match.shared.drops.keys()][0];
+  player = 'b'; weapons.setGunCount(39); ship.visible = true; ship.state = 'ACTIVE';
+  system.update();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(weapons.getGunCount(), 40);
+  assert.equal(published, 1);
+  assert.equal(match.shared.drops.has(id), false);
+  assert.equal(match.shared.apply(match.players.get('c'), 'dropClaim', { id }), false);
 });
 
 for (const roomId of ['classroom', 'classroom-teams', 'classroom-1vw']) {

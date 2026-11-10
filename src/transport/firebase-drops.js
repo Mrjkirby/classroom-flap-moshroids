@@ -32,7 +32,7 @@ const GUN_DROPS_PATH =
   `${ROOM_PATH}/gunDrops`;
 
 const GUN_DROP_LIFETIME =
-  10000;
+  12000;
 
 
 let remoteGunDrops =
