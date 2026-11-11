@@ -78,6 +78,13 @@ rollback points. No gameplay database migration or NAS rebuild is required.
   included in late-join snapshots. Ship movement remains client-reported;
   missile collision uses bounded position prediction, so network delay can
   still affect a close encounter. The rock's motion uses shared room time.
+- `src/safeZone.js`, `src/fenceSpawns.js`: touching either arm of a corner L
+  spawns a shared asteroid. Each player must touch a different L before that
+  player can trigger the previous one again; another player can independently
+  trigger the same L. Each Mr. K field generation doubles the number spawned
+  per touch (1, 2, 4, ...). KNAS records and replays these events for all players
+  and late joiners. Teams mode has no corner L fences. The legacy Firebase
+  transport does not implement fence-triggered spawning.
 - `src/asteroidDirector.js`, `asteroidFieldCache.js`: deterministic shared-time
   asteroid generation and prompt reconsideration of server events that arrive
   slightly ahead of the client's estimated clock; normal asteroid count doubles

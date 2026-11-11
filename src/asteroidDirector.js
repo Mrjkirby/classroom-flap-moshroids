@@ -726,7 +726,7 @@ export class AsteroidDirector {
 
   /* Rebuild the active field from shared events and clock slots. A late
    * joiner follows the same timeline as a client that stayed connected. */
-  reconstructField(worldWidth, worldHeight, now, destroyedRecords) {
+  reconstructField(worldWidth, worldHeight, now, destroyedRecords, fenceSpawns = new Map()) {
     const epoch = this.getEpochNumber(now);
     const epochStart = this.getEpochStart(now);
     const mrKEvents = [...destroyedRecords]
@@ -745,10 +745,31 @@ export class AsteroidDirector {
     const active = new Map(asteroids.map(asteroid => [asteroid.id, asteroid]));
     const prefix = `epoch-${epoch}-field-${this.fieldGeneration}-`;
     const destructions = [...destroyedRecords]
-      .filter(([id, record]) => id.startsWith(prefix) &&
+      .filter(([id, record]) => (id.startsWith(prefix) || id.startsWith(`epoch-${epoch}-fence-`)) &&
         record.destroyedAt >= this.fieldSpawnTimestamp && record.destroyedAt <= now)
       .sort((a, b) => a[1].destroyedAt - b[1].destroyedAt);
 
+    const touches = [...fenceSpawns].filter(([id, event]) =>
+      id.startsWith(`epoch-${epoch}-fence-`) && event.generation === this.fieldGeneration &&
+      event.at >= this.fieldSpawnTimestamp && event.at <= now)
+      .sort((a, b) => a[1].at - b[1].at || a[0].localeCompare(b[0]));
+    let touchIndex = 0;
+    const applyTouches = (at) => {
+      while (touchIndex < touches.length && touches[touchIndex][1].at <= at) {
+        const [id, event] = touches[touchIndex++];
+        for (let index = 0; index < 2 ** event.generation; index++) {
+          const seedText = `${id}-${index}`;
+          let hash = 2166136261;
+          for (const char of seedText) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+          const seed = hash >>> 0;
+          // Spawn within the central arena, clear of the four corner fences.
+          const x = worldWidth * (0.25 + seededRandom(seed + 300) * 0.5);
+          const y = worldHeight * (0.25 + seededRandom(seed + 400) * 0.5);
+          const asteroid = new Asteroid(x, y, 'large', seed, `${id}-asteroid-${index}`, event.at);
+          active.set(asteroid.id, asteroid);
+        }
+      }
+    };
     let destructionIndex = 0;
     const applyDestructions = (at) => {
       while (destructionIndex < destructions.length &&
@@ -761,6 +782,7 @@ export class AsteroidDirector {
     let previousSlot = this.getRespawnSlot(this.fieldSpawnTimestamp);
     for (let time = Math.ceil(this.fieldSpawnTimestamp / 1000) * 1000;
       time <= now; time += 1000) {
+      applyTouches(time);
       applyDestructions(time);
       const slot = this.getRespawnSlot(time);
       if (slot > previousSlot && !this.isJoinWindow(time) &&
@@ -771,6 +793,7 @@ export class AsteroidDirector {
       }
       previousSlot = slot;
     }
+    applyTouches(now);
     applyDestructions(now);
     this.lastRespawnSlot = previousSlot;
     return [...active.values()];

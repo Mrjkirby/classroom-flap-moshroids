@@ -4,7 +4,7 @@ import { ROOM_ID } from '../gameMode.js';
 import { sharedClock } from '../sharedClock.js';
 import { reportTransportDiagnostic } from './diagnostics.js';
 
-export const store = { players: new Map(), destroyed: new Map(), drops: new Map(), boss: null, mrK: null,
+export const store = { players: new Map(), destroyed: new Map(), fenceSpawns: new Map(), drops: new Map(), boss: null, mrK: null,
   missiles: null, missileHits: new Map(), identity: null, connected: false };
 const listeners = new Set();
 export const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
@@ -42,7 +42,7 @@ export function connect() {
         else if (value.channel === 'cannon') store.boss = { ...store.boss,
           cannons: { ...store.boss?.cannons, [value.uid]: value.cannon } };
         else {
-          const key = value.channel === 'asteroids' ? 'destroyed' : value.channel === 'drops' ? 'drops' : null;
+          const key = value.channel === 'asteroids' ? 'destroyed' : value.channel === 'drops' ? 'drops' : value.channel === 'fenceSpawns' ? 'fenceSpawns' : null;
           if (key) {
             // Immutable cache identity is the existing asteroid director's
             // reconstruction signal; mutating its Map silently loses MR K.

@@ -15,6 +15,8 @@ export class SharedState {
     this.match = match;
     this.destroyed = new Map();
     this.drops = new Map();
+    this.fenceSpawns = new Map();
+    this.lastFenceByPlayer = new Map();
     this.dropIds = new Map();
     this.boss = { mode: '1vw', phase: 'normal', round: 0 };
     this.sequence = 0;
@@ -26,7 +28,7 @@ export class SharedState {
     this.match.broadcast({ type: 'shared', channel, entries, serverNow: this.match.clock() });
   }
   snapshot(socket, playerId = '') {
-    for (const [channel, map] of [['asteroids', this.destroyed], ['drops', this.drops]]) {
+    for (const [channel, map] of [['asteroids', this.destroyed], ['drops', this.drops], ['fenceSpawns', this.fenceSpawns]]) {
       const entries = [...map];
       socket.send({ type: 'shared', channel, reset: true, entries: [] });
       for (let i = 0; i < entries.length; i += 100)
@@ -76,6 +78,20 @@ export class SharedState {
         this.emit('asteroids', [[id, record]]);
         this.missiles.launch(id, position, now);
       }
+      return true;
+    }
+    if (action === 'fenceTouch') {
+      const barrier = data.barrier;
+      if (this.match.mode === 'teams' || !player.visible ||
+          !['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(barrier) ||
+          this.lastFenceByPlayer.get(player.id) === barrier || this.fenceSpawns.size >= 20000) return false;
+      const current = this.currentMrK(now);
+      const eventId = `epoch-${Math.floor(now / MR_K_EPOCH_MS)}-fence-${++this.sequence}`;
+      const record = { at: now, generation: current.generation, barrier };
+      this.lastFenceByPlayer.set(player.id, barrier);
+      this.fenceSpawns.set(eventId, record);
+      this.fieldRevision++;
+      this.emit('fenceSpawns', [[eventId, record]]);
       return true;
     }
     if (action === 'asteroidClaim') {
@@ -171,6 +187,9 @@ export class SharedState {
     const old = [];
     for (const [id, record] of this.destroyed) if (Number(/^epoch-(\d+)-/.exec(id)?.[1]) < epoch - 1 ||
       (id.startsWith('1vw-shot-') && now - record.destroyedAt > SHOT_LIFETIME)) { this.destroyed.delete(id); old.push([id, null]); }
+    const oldFence = [];
+    for (const [id] of this.fenceSpawns) if (Number(/^epoch-(\d+)-/.exec(id)?.[1]) < epoch - 1) { this.fenceSpawns.delete(id); oldFence.push([id, null]); }
+    if (oldFence.length) { this.fieldRevision++; for (let i = 0; i < oldFence.length; i += 100) this.emit('fenceSpawns', oldFence.slice(i, i + 100)); }
     if (old.length) this.fieldRevision++;
     for (let i = 0; i < old.length; i += 100) this.emit('asteroids', old.slice(i, i + 100));
     if (this.match.mode === '1vw') this.apply({ id: '' }, 'survivorDisconnected');

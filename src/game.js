@@ -14,6 +14,7 @@ import { hasSharedMrK, getSharedMrK, queueMrKHits, updateMrKHitQueue,
 import { mrKPosition } from './mrKRules.js';
 import { createSharedMissiles } from './sharedMissiles.js';
 import { SafeZones } from './safeZone.js';
+import { getFenceSpawns, touchFence } from './fenceSpawns.js';
 import { Ship } from './ship.js';
 import { SpellingChallengeController } from './spellingController.js';
 import { weaponSystem } from './weaponSystem.js';
@@ -359,14 +360,15 @@ function replaceAsteroidField(
 
 function updateAsteroidRespawn(now) {
   const records = getDestroyedAsteroids();
+  const fenceSpawns = getFenceSpawns();
   const epoch = asteroidDirector.getEpochNumber(now);
   const slot = asteroidDirector.getRespawnSlot(now);
-  if (!asteroidFieldCache.needsUpdate(records, epoch, slot, now)) return;
+  if (!asteroidFieldCache.needsUpdate(records, epoch, slot, now, fenceSpawns)) return;
 
   const previousGeneration = asteroidDirector.fieldGeneration;
   const previousEpoch = asteroidDirector.currentEpoch;
   world.asteroids = asteroidDirector.reconstructField(
-    worldWidth, worldHeight, now, records
+    worldWidth, worldHeight, now, records, fenceSpawns
   ).filter(asteroid => !records.has(asteroid.id) && !asteroidMultiplayer.isPending(asteroid.id));
 
   if (previousEpoch !== asteroidDirector.currentEpoch ||
@@ -379,7 +381,7 @@ function updateAsteroidRespawn(now) {
         0, 60 - (now - asteroidDirector.fieldSpawnTimestamp) / 1000);
     }
   }
-  asteroidFieldCache.remember(records, epoch, asteroidDirector.getRespawnSlot(now), now);
+  asteroidFieldCache.remember(records, epoch, asteroidDirector.getRespawnSlot(now), now, fenceSpawns);
 }
 
 
@@ -937,9 +939,8 @@ function updateShips(
         !ship.remote &&
         !gauntlet.isPerimeterShip(ship)
       ) {
-        safeZones.blockShip(
-          ship
-        );
+        const barrier = safeZones.blockShip(ship);
+        if (multiplayerJoined && isMultiplayerConnected()) touchFence(barrier);
       }
 
       if (!ship.remote) teams.update(ship);

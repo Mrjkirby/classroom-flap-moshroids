@@ -33,20 +33,21 @@ export class SafeZones {
     this.segments = [];
 
     // TOP LEFT ┌ — RIGHT + DOWN
-    this.addL(WALL_OFFSET, WALL_OFFSET, 1, 1);
+    this.addL(WALL_OFFSET, WALL_OFFSET, 1, 1, 'top-left');
 
     // TOP RIGHT ┐ — LEFT + DOWN
-    this.addL(w - WALL_OFFSET, WALL_OFFSET, -1, 1);
+    this.addL(w - WALL_OFFSET, WALL_OFFSET, -1, 1, 'top-right');
 
     // BOTTOM LEFT └ — RIGHT + UP
-    this.addL(WALL_OFFSET, h - WALL_OFFSET, 1, -1);
+    this.addL(WALL_OFFSET, h - WALL_OFFSET, 1, -1, 'bottom-left');
 
     // BOTTOM RIGHT ┘ — LEFT + UP
-    this.addL(w - WALL_OFFSET, h - WALL_OFFSET, -1, -1);
+    this.addL(w - WALL_OFFSET, h - WALL_OFFSET, -1, -1, 'bottom-right');
   }
 
-  addL(cornerX, cornerY, horizontalDirection, verticalDirection) {
+  addL(cornerX, cornerY, horizontalDirection, verticalDirection, barrierId) {
     this.segments.push({
+      barrierId,
       x1: cornerX,
       y1: cornerY,
       x2: cornerX + horizontalDirection * ARM_LENGTH,
@@ -54,6 +55,7 @@ export class SafeZones {
     });
 
     this.segments.push({
+      barrierId,
       x1: cornerX,
       y1: cornerY,
       x2: cornerX,
@@ -175,7 +177,7 @@ export class SafeZones {
       }
     }
 
-    return true;
+    return collision.segment.barrierId;
   }
 
   circleHitsSegment(x, y, radius, segment) {

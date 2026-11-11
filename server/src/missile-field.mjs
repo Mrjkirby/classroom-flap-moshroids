@@ -26,7 +26,7 @@ export class MissileField {
     const key = `${this.director.getEpochNumber(now)}:${this.director.getRespawnSlot(now)}:` +
       `${shared.fieldRevision}:${gauntlet ? Math.floor(now / 1000) : ''}:${rosterKey}`;
     if (key !== this.key || boss !== this.boss) {
-      this.asteroids = this.director.reconstructField(WIDTH, HEIGHT, now, shared.destroyed)
+      this.asteroids = this.director.reconstructField(WIDTH, HEIGHT, now, shared.destroyed, shared.fenceSpawns)
         .filter(asteroid => !shared.destroyed.has(asteroid.id));
       if (gauntlet) this.asteroids.push(...activeCannonShots(boss, now, shared.destroyed, WIDTH, HEIGHT));
       this.key = key; this.boss = boss;
