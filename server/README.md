@@ -1,7 +1,7 @@
 # MOSHROIDS realtime server
 
 The authenticated `moshroids-auth-staging` service is running on KNAS behind the
-existing secure edge. The original `moshroids-realtime` stays deny-all standby.
+existing secure edge. The original `moshroids-realtime` is stopped and its Compose service is an opt-in standby profile. Public health, launch and game traffic use the authenticated server.
 The primary client cutover uses the repaired existing
 LLP login and requires live verification; see [current release status](../README.md).
 Earlier infrastructure gates below are retained as deployment history.

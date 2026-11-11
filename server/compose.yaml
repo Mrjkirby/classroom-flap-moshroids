@@ -5,7 +5,8 @@ services:
       dockerfile: server/Dockerfile
     image: moshroids-realtime:local
     container_name: moshroids-realtime
-    restart: unless-stopped
+    profiles: [standby]
+    restart: "no"
     ports:
       - "127.0.0.1:8794:8794"
     environment:

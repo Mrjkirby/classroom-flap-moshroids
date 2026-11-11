@@ -22,6 +22,7 @@ test('only exact GET paths are exposed, with no query-based credentials/targets'
 });
 test('health reaches only pinned service, strips credentials, preserves response', async () => {
   const { calls, env, response } = fixture();
+  env.MOSHROIDS = { fetch: async () => { throw new Error('standby must not be used'); } };
   assert.equal(await worker.fetch(new Request('https://example.workers.dev/health', {
     headers: { Cookie: 'synthetic', Authorization: 'synthetic', 'X-Target': 'http://other' },
   }), env), response);
@@ -90,7 +91,7 @@ test('launch redemption preflight is narrow and does not reach KNAS', async () =
 });
 test('VPC errors fail closed without exposing network details', async () => {
   const response = await worker.fetch(new Request('https://example.workers.dev/health'), {
-    MOSHROIDS: { fetch: async () => { throw new Error('private details'); } },
+    MOSHROIDS_AUTH_STAGING: { fetch: async () => { throw new Error('private details'); } },
   });
   assert.equal(response.status, 502);
   assert.equal(await response.text(), 'MOSHROIDS staging origin unavailable');

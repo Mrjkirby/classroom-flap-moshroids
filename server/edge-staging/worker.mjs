@@ -86,7 +86,7 @@ export default {
           method: 'GET', headers, redirect: 'manual',
         }));
       }
-      return await env.MOSHROIDS.fetch(new Request('http://moshroids-realtime:8794/health', {
+      return await env.MOSHROIDS_AUTH_STAGING.fetch(new Request('http://moshroids-realtime:8794/health', {
         method: 'GET', headers, redirect: 'manual',
       }));
     } catch {

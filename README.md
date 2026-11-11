@@ -20,8 +20,7 @@ Live programmatic checks using that account passed launch issuance, redemption,
 authenticated KNAS WebSocket connection and rotated-token reconnect in Classic,
 Teams and 1VW. Automatic renewal through the existing login issuer also passed;
 the connection remained active beyond its original five-minute lease.
-KNAS's private authenticated health confirmed the test connection. Public
-`/health` still describes the separate standby service by design.
+KNAS's private authenticated health confirmed the test connection. Public `/health` now checks the authenticated classroom server.
 Rendered browser game launch and multi-student gameplay remain unverified:
 the Mac reported locked and the browser launch control did not activate.
 Do not describe API checks as completed visual multiplayer verification.
@@ -109,9 +108,9 @@ when the connection returns, and an interrupted spelling challenge resumes.
 
 The existing edge is `wss://moshroids-staging.mrjkirby.workers.dev/ws`, with
 `POST /api/launch/redeem` on the same HTTPS host. Its existing private route
-reaches `moshroids-auth-staging` on KNAS. The name remains unchanged during
-cutover. The standby `moshroids-realtime` container and other services remain
-separate. No raw NAS port is exposed and no Cloudflare VPC change is needed.
+reaches `moshroids-auth-staging` on KNAS for gameplay and health checks.
+The inactive `moshroids-realtime` standby is stopped; the cloudflared tunnel
+continues to provide connectivity. No raw NAS port is exposed and no Cloudflare VPC change is needed.
 
 Only launch/renewal checks use LLP/EDU; game frames use KNAS. Sessions and rooms
 are transient and vanish on server restart. No database or inventory was added.
